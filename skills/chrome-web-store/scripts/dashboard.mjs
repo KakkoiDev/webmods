@@ -582,6 +582,27 @@ if (step === 'login') {
     if (res !== 'clicked') throw new Error(`cannot submit: ${res}`);
     await sleep(6000);
     await recon(page, 'submit-dialog');
+
+    // The button only opens a confirmation dialog; the dialog's own "Submit For Review"
+    // is what actually submits. Its default "publish automatically after review" is left
+    // as the dashboard sets it.
+    const confirm = await page.evaluate(() => {
+        const all = [];
+        const walk = (r) => { for (const el of r.querySelectorAll('*')) { all.push(el); if (el.shadowRoot) walk(el.shadowRoot); } };
+        walk(document);
+        const btn = all.find((e) => ['BUTTON', 'A'].includes(e.tagName)
+            && (e.innerText || '').trim() === 'Submit For Review' && (e.offsetWidth || e.offsetHeight));
+        if (!btn) return 'confirm button not found';
+        btn.scrollIntoView({ block: 'center' });
+        btn.click();
+        return 'confirmed';
+    });
+    console.error(`confirm: ${confirm}`);
+    if (confirm !== 'confirmed') throw new Error(confirm);
+    await sleep(10000);
+    const status = await page.evaluate(() => document.body.innerText.match(/Status:\s*([\w ]+)/)?.[1]?.trim());
+    console.error(`status now: ${status}`);
+    await recon(page, 'submitted');
     await browser.disconnect();
 } else if (step === 'all') {
     await runAll();
