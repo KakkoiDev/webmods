@@ -105,14 +105,15 @@ Used for exactly one rule: removing the Origin header from the extension's own r
 
 ## Screenshots
 
-Two are built and ready to upload, both exactly 1280x800:
+Three are built and ready to upload, each exactly 1280x800. Upload order matters - the first is the one people see:
 
 1. `store-screenshot-1.png` - composer before/after, "Translate your draft before you send it"
-2. `store-screenshot-2.png` - the settings dialog, "Bring your own key: Gemini, Claude, or a local Ollama model"
+2. `store-screenshot-2.png` - a received message, "Every message you receive gets a translate link"
+3. `store-screenshot-3.png` - the settings dialog, "Bring your own key: Gemini, Claude, or a local Ollama model"
 
 Uploading them is manual; the API cannot do screenshots.
 
-They were composed rather than padded, because the raw captures (402x251 and 542x252) would have needed a 2-3x upscale to fill the frame:
+They were composed rather than padded, because the raw captures (402x251, 542x252, 491x78) would have needed a 2-3x upscale to fill the frame:
 
 ```sh
 node skills/chrome-web-store/scripts/frame-screenshot.mjs extensions/slack-ai-translate/store-screenshot-1.png \
@@ -121,4 +122,14 @@ node skills/chrome-web-store/scripts/frame-screenshot.mjs extensions/slack-ai-tr
 
 Capture only from a self-DM or a scratch channel - whatever is on screen becomes public on the listing.
 
-**Gap:** both screenshots show composer translation. The description leads with translating *received* messages, and nothing pictures it. A third shot - a message hovered, its toolbar globe visible, then translated with "See original" - would cover the headline feature.
+Shot 3 is captured **from the shipped code**, not by hand, so it can never show stale UI. Regenerate it whenever the settings dialog changes:
+
+```sh
+node tools/shot-slack-translate-dialog.mjs /tmp/dialog.png
+node skills/chrome-web-store/scripts/frame-screenshot.mjs extensions/slack-ai-translate/store-screenshot-3.png \
+  --shot=/tmp/dialog.png --scale=0.45 --caption="Bring your own key: Gemini, Claude, or a local Ollama model"
+```
+
+It loads the real generated content script in a headless extension, injects the composer anchor so the script's own button and `openSettings()` run, and screenshots the dialog element at 2x.
+
+**Known weakness:** shot 2 shows a received message *before* translating - the "See translation" link is visible but no translation is. A capture of that message after translating, with Japanese text and "See original", would be a stronger shot and could take the lead position.

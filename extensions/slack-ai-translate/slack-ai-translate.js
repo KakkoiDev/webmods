@@ -20,7 +20,7 @@ function GM_deleteValue(key) { return chrome.storage.local.remove(key); }
 // ==UserScript==
 // @name         Slack AI Translate
 // @namespace    http://tampermonkey.net/
-// @version      2026.07.27
+// @version      2026.07.27.1
 // @description  Add English/Japanese translation button to Slack
 // @author       KakkoiDev
 // @match        https://app.slack.com/*
@@ -334,7 +334,7 @@ Keep emojis exactly as they are (unicode emoji, :emoji_codes:, and emoji <img> t
                 result = await HELPERS.httpPost(provider.request(text, prompt));
             } catch (networkError) {
                 if (providerId === 'ollama') {
-                    throw new TranslationError(`Cannot reach Ollama at ${HELPERS.storage.ollamaHost}. Is it running? If it rejects requests from the browser, restart it with OLLAMA_ORIGINS=*`);
+                    throw new TranslationError(`Cannot reach Ollama at ${HELPERS.storage.ollamaHost}. Is it running?`);
                 }
                 throw new TranslationError(networkError.message);
             }
@@ -894,8 +894,7 @@ Keep emojis exactly as they are (unicode emoji, :emoji_codes:, and emoji <img> t
                         <input class="${CONSTANTS.CLASSES.PROVIDER_MODEL}" list="translate-model-suggestions">
                         ${modelDatalist}
                         <p>Setup: install Ollama from <a href="https://ollama.com" target="_blank">ollama.com</a>, then run <code>ollama pull ${CONSTANTS.DEFAULTS.OLLAMA_MODEL}</code>. No API key needed; nothing leaves your machine.</p>
-                        <p>Use a 4b-parameter model or larger: 1b-class models (e.g. gemma3:1b) receive the translation prompt but are too weak to follow it and tend to echo the message back untranslated. Larger models (e.g. gemma4) also preserve message formatting like links and mentions more reliably.</p>
-                        <p>If translations fail with a connection or 403 error, quit Ollama and restart it with <code>OLLAMA_ORIGINS=*</code> set (e.g. <code>OLLAMA_ORIGINS=* ollama serve</code>).</p>`;
+                        <p>Use a 4b-parameter model or larger: 1b-class models (e.g. gemma3:1b) receive the translation prompt but are too weak to follow it and tend to echo the message back untranslated. Larger models (e.g. gemma4) also preserve message formatting like links and mentions more reliably.</p>`;
                     dialogBody.querySelector(`.${CONSTANTS.CLASSES.PROVIDER_HOST}`).value = storage.ollamaHost;
                     dialogBody.querySelector(`.${CONSTANTS.CLASSES.PROVIDER_MODEL}`).value = storage.ollamaModel;
                     break;

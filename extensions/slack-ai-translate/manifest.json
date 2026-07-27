@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Slack AI Translate",
-  "version": "2026.7.27",
+  "version": "2026.7.27.1",
   "minimum_chrome_version": "134",
   "description": "Add an English/Japanese translation button to Slack messages and the composer.",
   "icons": {
