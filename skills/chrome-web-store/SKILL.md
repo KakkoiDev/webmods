@@ -72,6 +72,35 @@ node skills/chrome-web-store/scripts/frame-screenshot.mjs out.png \
 
 Two `--shot`s sit side by side, which is how a before/after pair fits one screenshot. `--scale` multiplies the source's natural size (keep it at or below ~1.2 to stay crisp), `--bg` sets the gradient base, `--size` defaults to 1280x800. Uses the same borrowed Puppeteer as `tools/make-icons.mjs`, so run it from the repo root. Worked example: `extensions/slack-ai-translate/store-screenshot-*.png`.
 
+## Driving the dashboard in a browser (for what the API can't do)
+
+`dashboard.mjs` automates the dashboard-only parts: creating the item, the listing copy, screenshots, the privacy answers. It never ticks the developer certification boxes and never presses Submit - those are the developer's legal attestation.
+
+**Do not try to sign in to Google inside a Puppeteer-launched Chrome.** It fails with *"This browser or app may not be secure"*; Google blocks its sign-in flow in automation-launched browsers, and no user-agent or flag tweak reliably gets around it. Confirmed on 2026-07-27.
+
+The working pattern is to never authenticate under automation - sign in to a normal Chrome, then attach to the already-authenticated session:
+
+```sh
+# 1. you launch a real Chrome, sign in by hand in this window
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9222 \
+  --user-data-dir="$HOME/.cache/chrome-web-store/chrome-profile" \
+  --no-first-run --no-default-browser-check \
+  "https://chrome.google.com/webstore/devconsole" &
+
+# 2. the script attaches to it
+node skills/chrome-web-store/scripts/dashboard.mjs attach
+```
+
+Details that matter:
+
+- **The dedicated `--user-data-dir` is required, not tidiness.** Chrome refuses `--remote-debugging-port` on the default profile (2025 security change). A separate profile also keeps the debugging port away from your everyday session.
+- **The profile persists**, so the sign-in is one-time; later runs attach straight to the dashboard.
+- **`puppeteer.connect({browserURL})`, then `disconnect()` - never `close()`.** The window belongs to the user.
+- **Port 9222 is open to any local process while that Chrome runs.** Quit the window when finished.
+- **The dashboard is Angular Material with shadow DOM.** Selectors have to be found against the live page, not guessed: `dashboard.mjs`'s `recon()` walks every shadow root and dumps the interactive controls with their stable handles, alongside a screenshot. Anchor on `aria-label` (`button[aria-label="Add a new item"]`), never on hashed classes.
+- **Log the URL on every poll.** The first attempt timed out after 8 minutes having recorded nothing, so the block page was invisible; per-poll URL logging is what identified it.
+
 ## Step 3 - first publish (dashboard, once per extension)
 
 The API can't create a listing, so the first release is manual:
