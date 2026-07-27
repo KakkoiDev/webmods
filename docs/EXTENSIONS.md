@@ -31,7 +31,7 @@ Some userscripts are also shipped as Chrome extensions so people can install the
 
 | `@grant` | Shim | Extra manifest |
 |---|---|---|
-| `GM_xmlhttpRequest` | `chrome.runtime.sendMessage` to a generated `gm-bridge.js` service worker, which does the `fetch` | `"background": { "service_worker": "gm-bridge.js" }` + `host_permissions` |
+| `GM_xmlhttpRequest` | `chrome.runtime.sendMessage` to a generated `gm-bridge.js` service worker, which does the `fetch` | `"background": { "service_worker": "gm-bridge.js" }` + `host_permissions` + `"permissions": ["declarativeNetRequestWithHostAccess"]` |
 | `GM_getValue` / `GM_setValue` / `GM_deleteValue` | `chrome.storage.local` | `"permissions": ["storage"]` |
 
 Two contract differences that will bite:
@@ -40,6 +40,8 @@ Two contract differences that will bite:
 - **The `GM_xmlhttpRequest` shim covers only the subset the repo's scripts use**: `onload` / `onerror` / `ontimeout`, and `status` / `responseText`. No `onprogress`, no `abort()`, no `responseType`, no binary. Extend the shim before relying on more.
 
 Why `GM_xmlhttpRequest` can't just be a `fetch` in the content script: MV3 removed content-script cross-origin privileges, so a direct `fetch` is an ordinary CORS request from the page's origin, and an `http://localhost` call from an https page also hits mixed-content / Private Network Access rules. The service worker has the host permissions; the content script doesn't.
+
+And why the bridge needs `declarativeNetRequestWithHostAccess`: Tampermonkey's `GM_xmlhttpRequest` sends **no `Origin` header**, and scripts depend on that. A service-worker `fetch` always sends `Origin: chrome-extension://<id>`, and `fetch` cannot remove it - `Origin` is a forbidden header name. Ollama, for one, answers **403 to any request carrying an `Origin`**, including a `chrome-extension://` one, so the extension broke a provider that worked fine under Tampermonkey. The bridge registers a `declarativeNetRequest` **session rule** that strips `Origin` from its own requests, scoped by `tabIds: [-1]` so page-initiated requests to the same hosts keep theirs (otherwise this extension would quietly break CORS for every localhost dev server in the browser). The generator refuses to emit the bridge if the manifest doesn't declare the permission.
 
 ## Distribution channels
 

@@ -11,6 +11,7 @@ The userscript stays the single source of truth; `slack-ai-translate.js` and `gm
 - **`gm-bridge.js` service worker** - the userscript grants `GM_xmlhttpRequest`. MV3 gives content scripts no cross-origin privileges, so the generated shim relays each request to this service worker, which fetches it with the extension's `host_permissions`.
 - **`host_permissions`** - one per `@connect` in the userscript: Gemini, Anthropic, and Ollama on localhost. Match patterns ignore the port, so `http://localhost/*` covers `:11434`. A custom Ollama host outside `localhost`/`127.0.0.1` will not work here (host permissions are static).
 - **`permissions: ["storage"]`** - the API keys live in `chrome.storage.local`, not in `localStorage` on `app.slack.com` where any script on the page could read them.
+- **`permissions: ["declarativeNetRequestWithHostAccess"]`** - Tampermonkey's `GM_xmlhttpRequest` sends no `Origin` header and Ollama 403s any request that carries one, but a service-worker `fetch` cannot drop `Origin`. The bridge registers a session rule that strips it from its own requests only (`tabIds: [-1]`), so Ollama works with no `OLLAMA_ORIGINS` setup and page requests to localhost are untouched.
 - **`minimum_chrome_version: 134`** - the settings dialog uses the HTML `closedby="any"` attribute (`scripts/slack-ai-translate.user.js:528`) to dismiss on an outside click, which is Chrome 134+. Everything else here works from Chrome 116.
 
 ## Install (unpacked, for testing)
