@@ -533,6 +533,56 @@ if (step === 'login') {
 
     await recon(page, 'distribution');
     await browser.disconnect();
+} else if (step === 'certify') {
+    // The developer's compliance attestation. Only tick these on an explicit instruction
+    // from the developer, and only after checking each statement is true of the extension.
+    const { browser, page } = await attach();
+    await page.evaluate(() => {
+        const all = [];
+        const walk = (r) => { for (const el of r.querySelectorAll('*')) { all.push(el); if (el.shadowRoot) walk(el.shadowRoot); } };
+        walk(document);
+        const ok = all.find((e) => e.tagName === 'BUTTON' && (e.innerText || '').trim() === 'OK' && (e.offsetWidth || e.offsetHeight));
+        if (ok) ok.click();
+        const link = all.find((e) => e.tagName === 'A' && e.innerText?.trim() === 'Privacy' && (e.offsetWidth || e.offsetHeight));
+        if (link) link.click();
+    });
+    await sleep(6000);
+
+    const report = await page.evaluate(() => {
+        const all = [];
+        const walk = (r) => { for (const el of r.querySelectorAll('*')) { all.push(el); if (el.shadowRoot) walk(el.shadowRoot); } };
+        walk(document);
+        const lab = (e) => { let n = e, t = ''; for (let i = 0; i < 5 && n && !t; i++, n = n.parentElement) t = (n.innerText || '').replace(/\s+/g, ' ').trim(); return t; };
+        const out = [];
+        for (const cb of all.filter((e) => e.tagName === 'INPUT' && e.type === 'checkbox' && (e.offsetWidth || e.offsetHeight))) {
+            const text = lab(cb);
+            if (!text.startsWith('I do not')) continue;
+            if (!cb.checked) cb.click();
+            out.push(`${cb.checked ? '[x]' : 'FAILED'} ${text.slice(0, 55)}`);
+        }
+        return out;
+    });
+    for (const line of report) console.error(line);
+    if (report.length !== 3) throw new Error(`expected 3 certification boxes, handled ${report.length}`);
+    await sleep(1500);
+    await browser.disconnect();
+} else if (step === 'submit') {
+    const { browser, page } = await attach();
+    const res = await page.evaluate(() => {
+        const all = [];
+        const walk = (r) => { for (const el of r.querySelectorAll('*')) { all.push(el); if (el.shadowRoot) walk(el.shadowRoot); } };
+        walk(document);
+        const btn = all.find((e) => e.tagName === 'BUTTON' && (e.innerText || '').trim() === 'Submit for review');
+        if (!btn) return 'not found';
+        if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return 'still disabled';
+        btn.click();
+        return 'clicked';
+    });
+    console.error(`submit: ${res}`);
+    if (res !== 'clicked') throw new Error(`cannot submit: ${res}`);
+    await sleep(6000);
+    await recon(page, 'submit-dialog');
+    await browser.disconnect();
 } else if (step === 'all') {
     await runAll();
 } else if (step === 'attach') {
