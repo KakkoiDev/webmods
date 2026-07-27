@@ -74,32 +74,37 @@ Two `--shot`s sit side by side, which is how a before/after pair fits one screen
 
 ## Driving the dashboard in a browser (for what the API can't do)
 
-`dashboard.mjs` automates the dashboard-only parts: creating the item, the listing copy, screenshots, the privacy answers. It never ticks the developer certification boxes and never presses Submit - those are the developer's legal attestation.
+`dashboard.mjs` automates the dashboard-only parts: creating the item, the listing copy, screenshots, the privacy answers, and visibility. It reads everything from the extension's own `store-listing.md`, so the repo stays the source of truth and nothing per-extension is baked into the script.
 
-**Do not try to sign in to Google inside a Puppeteer-launched Chrome.** It fails with *"This browser or app may not be secure"*; Google blocks its sign-in flow in automation-launched browsers, and no user-agent or flag tweak reliably gets around it. Confirmed on 2026-07-27.
-
-The working pattern is to never authenticate under automation - sign in to a normal Chrome, then attach to the already-authenticated session:
+**Sign in first, by hand, in a normal Chrome.** Google refuses its sign-in flow inside a Puppeteer-launched browser (*"This browser or app may not be secure"*) and no flag or user-agent tweak reliably beats it. The script only ever attaches to a session you authenticated yourself:
 
 ```sh
-# 1. you launch a real Chrome, sign in by hand in this window
+# 1. you launch a real Chrome and sign in by hand in this window
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
   --user-data-dir="$HOME/.cache/chrome-web-store/chrome-profile" \
   --no-first-run --no-default-browser-check \
   "https://chrome.google.com/webstore/devconsole" &
 
-# 2. the script attaches to it
-node skills/chrome-web-store/scripts/dashboard.mjs attach
+# 2. everything else is the script
+node skills/chrome-web-store/scripts/dashboard.mjs all extensions/<name>   # create + fill + save
+node skills/chrome-web-store/scripts/dashboard.mjs status                  # what still blocks submit
 ```
 
-Details that matter:
+`all` creates the item, uploads the zip, fills the store listing, the privacy tab and visibility, and saves after each. Single steps for repairs: `newitem | upload | listing [text|icon|shots] | privacy | distribution | save`. Use **`fill`** instead of `all` against an item that already exists - **`all` mints a new item every time**, so re-running it on a published extension produces a duplicate.
 
-- **The dedicated `--user-data-dir` is required, not tidiness.** Chrome refuses `--remote-debugging-port` on the default profile (2025 security change). A separate profile also keeps the debugging port away from your everyday session.
-- **The profile persists**, so the sign-in is one-time; later runs attach straight to the dashboard.
-- **`puppeteer.connect({browserURL})`, then `disconnect()` - never `close()`.** The window belongs to the user.
-- **Port 9222 is open to any local process while that Chrome runs.** Quit the window when finished.
-- **The dashboard is Angular Material with shadow DOM.** Selectors have to be found against the live page, not guessed: `dashboard.mjs`'s `recon()` walks every shadow root and dumps the interactive controls with their stable handles, alongside a screenshot. Anchor on `aria-label` (`button[aria-label="Add a new item"]`), never on hashed classes.
-- **Log the URL on every poll.** The first attempt timed out after 8 minutes having recorded nothing, so the block page was invisible; per-poll URL logging is what identified it.
+Two steps are deliberately **not** part of `all`:
+
+```sh
+node .../dashboard.mjs certify   # ticks the three compliance attestations
+node .../dashboard.mjs submit    # submits for review - irreversible
+```
+
+The certifications are the developer's own legal statement and submission cannot be undone. Run them only when the developer explicitly asks, and only after checking each statement is true of the extension.
+
+**Verify with `status`, never with the fill log.** It reports the item status, ID, whether Submit is enabled, and the dashboard's own blocker list. This matters more than it sounds: the dashboard silently swallows interactions, and two settings once shipped wrong (visibility stuck on Public, remote code on Yes) while the script reported success. Every mutating helper now re-reads the page and throws if the change did not land.
+
+The full catalogue of dashboard traps - beforeunload wedging CDP, Material radios ignoring label clicks, `.type()` timing out on long text, `networkidle2` never firing, the two-stage submit dialog - is in **[docs/CHROME-WEB-STORE-AUTOMATION.md](../../docs/CHROME-WEB-STORE-AUTOMATION.md)**. Read it before changing `dashboard.mjs`.
 
 ## Step 3 - first publish (dashboard, once per extension)
 

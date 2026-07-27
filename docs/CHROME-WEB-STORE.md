@@ -4,6 +4,13 @@ How to register a Chrome Web Store (CWS) developer account and publish a generat
 
 Unpacked/dev-mode is fine for testing, but colleagues can't use it. The Web Store gives a real one-click install with auto-update. Firefox/Edge and the tradeoffs are in [EXTENSIONS.md](EXTENSIONS.md); this guide is Chrome-only.
 
+
+## Automating the dashboard
+
+The dashboard-only steps (create item, listing copy, screenshots, privacy answers, visibility) are driven by `skills/chrome-web-store/scripts/dashboard.mjs` against a Chrome you signed in to yourself. See the [chrome-web-store skill](../skills/chrome-web-store/SKILL.md) for the commands.
+
+Before changing that script, read **[CHROME-WEB-STORE-AUTOMATION.md](CHROME-WEB-STORE-AUTOMATION.md)** - every dashboard trap hit while publishing `slack-ai-translate`, most of which fail by silently doing nothing rather than by throwing.
+
 ## 1. Register the developer account (one-time)
 
 1. Go to the **[Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole)** and sign in with the Google account you want to own the listings (a work/team account is better than a personal one - the listings belong to whoever owns it).

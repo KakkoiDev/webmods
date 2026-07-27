@@ -127,4 +127,6 @@ Notes: the dedicated profile has no Tampermonkey, so the agent injects the scrip
 - **[DEVTOOLS-MCP.md](docs/DEVTOOLS-MCP.md)** - drive your logged-in Chrome from an AI agent to debug scripts on auth-gated sites.
 - **[EXTENSIONS.md](docs/EXTENSIONS.md)** - shipping a userscript as a Chrome extension (generated from the source), and where to publish.
 - **[CHROME-WEB-STORE.md](docs/CHROME-WEB-STORE.md)** - registering a Chrome Web Store account and publishing a generated extension.
+- **[CHROME-WEB-STORE-AUTOMATION.md](docs/CHROME-WEB-STORE-AUTOMATION.md)** - every way the CWS dashboard breaks under automation, and how the publish script handles it.
+- **[EXTENSION-TESTING.md](docs/EXTENSION-TESTING.md)** - verifying an extension headlessly before shipping it.
 - **[IDEAS.md](docs/IDEAS.md)** - the backlog.
