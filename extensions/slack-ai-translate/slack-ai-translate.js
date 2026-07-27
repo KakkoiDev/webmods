@@ -1,3 +1,22 @@
+// GENERATED from scripts/slack-ai-translate.user.js by tools/build-extensions.mjs - do not edit.
+// Edit the source userscript instead; this file is regenerated on commit.
+
+// GM shims for @grant GM_xmlhttpRequest, GM_getValue, GM_setValue, GM_deleteValue - these replace Tampermonkey's APIs.
+function GM_xmlhttpRequest(opts) {
+    chrome.runtime.sendMessage(
+        { __gm: 'xhr', method: opts.method || 'GET', url: opts.url,
+          headers: opts.headers || {}, data: opts.data, timeout: opts.timeout },
+        (res) => {
+            if (chrome.runtime.lastError) return opts.onerror?.({ error: chrome.runtime.lastError.message });
+            if (res.timeout) return opts.ontimeout?.();
+            if (res.error) return opts.onerror?.(res);
+            opts.onload?.({ status: res.status, responseText: res.responseText });
+        }
+    );
+}
+function GM_getValue(key, def) { return chrome.storage.local.get(key).then((o) => o[key] ?? def); }
+function GM_setValue(key, value) { return chrome.storage.local.set({ [key]: value }); }
+function GM_deleteValue(key) { return chrome.storage.local.remove(key); }
 // ==UserScript==
 // @name         Slack AI Translate
 // @namespace    http://tampermonkey.net/

@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Slack AI Translate",
+  "version": "2026.7.27",
+  "minimum_chrome_version": "116",
+  "description": "Add an English/Japanese translation button to Slack messages and the composer.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.anthropic.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "gm-bridge.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://app.slack.com/*"
+      ],
+      "js": [
+        "slack-ai-translate.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

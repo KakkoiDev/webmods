@@ -1,0 +1,4 @@
+{
+  "userscript": "scripts/slack-ai-translate.user.js",
+  "out": "slack-ai-translate.js"
+}
