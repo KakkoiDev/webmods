@@ -23,7 +23,7 @@ Some userscripts are also shipped as Chrome extensions so people can install the
 3. Write `extensions/<name>/source.json` pointing at the userscript.
 4. Add `extensions/<name>/.gitignore` containing `_metadata/`.
 5. Run `node tools/build-extensions.mjs` to generate the `.js` (or just commit - the hook does it).
-6. Load unpacked (`chrome://extensions` -> Developer mode -> Load unpacked) to test. If the userscript version injects into the same world, disable it first (e.g. scripts guarded by a global like `__NOC_ARMED__` let only the first instance win).
+6. Verify headlessly before loading by hand - the extension-only failure modes (MV3 CORS, the service worker, `chrome.storage`, request headers) are exactly what the Tampermonkey loop never exercises: **[EXTENSION-TESTING.md](EXTENSION-TESTING.md)**. Then load unpacked (`chrome://extensions` -> Developer mode -> Load unpacked) to test. If the userscript version injects into the same world, disable it first (e.g. scripts guarded by a global like `__NOC_ARMED__` let only the first instance win).
 
 ## `GM_*` shims
 

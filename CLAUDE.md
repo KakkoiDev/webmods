@@ -60,4 +60,6 @@ Some userscripts are also shipped as Chrome extensions (under `extensions/<name>
 - Extensions with **no `source.json`** (e.g. `csp-unlock`) are hand-authored - the generator leaves them alone.
 - In the manifest, use `world: "MAIN"` when the script needs the page realm (page globals, or hooking the page's `fetch`/`XHR`); the default isolated world otherwise. `world: "MAIN"` needs `minimum_chrome_version: "111"`.
 
+- **Verify an extension headlessly before handing it over.** Puppeteer (already under `skills/greasyfork/scripts/node_modules`) can `--load-extension` a real extension dir, drive its service worker, and hit real local services. The extension-only failure modes - MV3 CORS, the service worker, `chrome.storage`, request headers - are precisely what the Tampermonkey dev loop never exercises, so "it works as a userscript" is not evidence. Patterns and gotchas: [docs/EXTENSION-TESTING.md](docs/EXTENSION-TESTING.md).
+
 Full guide (how to add one, `@grant`->shim mapping, distribution channels): [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
