@@ -79,16 +79,16 @@ Then certify all three, all of which hold:
 
 ## Permission justifications
 
-**Host access to `generativelanguage.googleapis.com` and `api.anthropic.com`**
+**Host permission justification** - the dashboard has ONE field for all four hosts, not one per host:
 
 ```
-These are the translation providers the user chooses between. When the user clicks the translate button, the extension sends that one message's text, plus the user's own API key, to the provider they selected, and displays the translated text it returns. No request is made until the user clicks, and no other host is contacted.
-```
+The extension translates Slack messages using an AI provider the user chooses and configures with their own API key, so it needs to reach that provider's API.
 
-**Host access to `http://localhost/*` and `http://127.0.0.1/*`**
+generativelanguage.googleapis.com and api.anthropic.com are two of the three provider options (Google Gemini and Anthropic Claude). When the user clicks the translate button, the extension sends that one message's text, plus the user's own API key, to whichever provider they selected, and displays the translated text it returns.
 
-```
-The third provider option is Ollama, an AI model the user runs locally on their own machine, which listens on localhost. Users who choose it get translation without any text leaving their computer. If the user has not configured Ollama, these hosts are never contacted.
+http://localhost/* and http://127.0.0.1/* are the third option: Ollama, an AI model the user runs locally on their own machine, which listens on localhost. Users who choose it get translation without any text leaving their computer. If the user has not configured Ollama, these hosts are never contacted.
+
+No request is made to any host until the user clicks translate, and no host outside this list is ever contacted.
 ```
 
 **`storage`**
