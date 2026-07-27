@@ -28,4 +28,6 @@ The extension has its own storage. On first run you re-enter the API key here, e
 
 ## Distribution
 
-Unpacked is dev-only. For colleagues, this needs to go on the Chrome Web Store (dev account + review) or be pushed by IT. See [CHROME-WEB-STORE.md](../../docs/CHROME-WEB-STORE.md); the store assets (store icon, screenshot, `PRIVACY.md`, `store-listing.md`) are not built for this extension yet.
+Unpacked is dev-only. For colleagues, this goes on the Chrome Web Store as an **unlisted** item. Store assets are ready: [`store-listing.md`](store-listing.md) (paste-ready copy, data-usage answers, per-permission justifications), [`PRIVACY.md`](PRIVACY.md), and `store-icon-128.png`. Build the upload bundle with `node skills/chrome-web-store/scripts/make-zip.mjs extensions/slack-ai-translate`.
+
+Two things still need a human: the **screenshots** (the API cannot upload them) and the **first publish**, which only the dashboard can do because it is what mints the item ID. Every version after that is headless. Walkthrough: [CHROME-WEB-STORE.md](../../docs/CHROME-WEB-STORE.md).
