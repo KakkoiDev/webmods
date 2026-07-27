@@ -18,11 +18,28 @@ Some userscripts are also shipped as Chrome extensions so people can install the
    - `@match` -> `content_scripts[].matches`
    - `@run-at` -> `run_at` (`document-start` -> `document_start`)
    - **`world`**: use `"MAIN"` if the script needs the page's realm - reading page globals, or hooking the page's own `fetch`/`XMLHttpRequest` (e.g. `notion-comment-recovery`). Use the default isolated world only for pure DOM scripts. `world: "MAIN"` needs `"minimum_chrome_version": "111"`.
-   - `@grant`: `@grant none` needs nothing. `GM_*` grants need shims (`GM_setValue` -> `chrome.storage`, `GM_setClipboard` -> clipboard API, `GM_xmlhttpRequest` -> extension `fetch` + `host_permissions`). Note: `chrome.*` APIs exist only in the isolated world, so a script needing **both** MAIN world and `chrome.storage` can't have both - resolve per script.
+   - `@grant`: the generator injects a shim per grant (see the table below). It **errors out** on a grant it has no shim for, rather than emit an extension that silently does nothing - add the shim to `SHIMS` in `tools/build-extensions.mjs`. Note: `chrome.*` APIs exist only in the isolated world, so a script needing **both** MAIN world and `chrome.storage` can't have both - resolve per script.
+   - `@connect` -> `host_permissions`: **manual**, like `@match`. Bare `@connect` hostnames don't map cleanly onto match patterns (`localhost` -> `http://localhost/*`, and match patterns ignore the port), so the generator doesn't sync them.
 3. Write `extensions/<name>/source.json` pointing at the userscript.
 4. Add `extensions/<name>/.gitignore` containing `_metadata/`.
 5. Run `node tools/build-extensions.mjs` to generate the `.js` (or just commit - the hook does it).
 6. Load unpacked (`chrome://extensions` -> Developer mode -> Load unpacked) to test. If the userscript version injects into the same world, disable it first (e.g. scripts guarded by a global like `__NOC_ARMED__` let only the first instance win).
+
+## `GM_*` shims
+
+`tools/build-extensions.mjs` prepends a shim for each `@grant` the userscript declares, above the copied body. What's implemented today (worked example: `slack-ai-translate`):
+
+| `@grant` | Shim | Extra manifest |
+|---|---|---|
+| `GM_xmlhttpRequest` | `chrome.runtime.sendMessage` to a generated `gm-bridge.js` service worker, which does the `fetch` | `"background": { "service_worker": "gm-bridge.js" }` + `host_permissions` |
+| `GM_getValue` / `GM_setValue` / `GM_deleteValue` | `chrome.storage.local` | `"permissions": ["storage"]` |
+
+Two contract differences that will bite:
+
+- **`GM_getValue` returns a Promise here**, because `chrome.storage` is async, where Tampermonkey returns the value directly. A script must `await` it to work in both. The pattern in `slack-ai-translate.user.js` is a one-shot `hydrate()` into an in-memory cache, so the rest of the script keeps reading settings synchronously.
+- **The `GM_xmlhttpRequest` shim covers only the subset the repo's scripts use**: `onload` / `onerror` / `ontimeout`, and `status` / `responseText`. No `onprogress`, no `abort()`, no `responseType`, no binary. Extend the shim before relying on more.
+
+Why `GM_xmlhttpRequest` can't just be a `fetch` in the content script: MV3 removed content-script cross-origin privileges, so a direct `fetch` is an ordinary CORS request from the page's origin, and an `http://localhost` call from an https page also hits mixed-content / Private Network Access rules. The service worker has the host permissions; the content script doesn't.
 
 ## Distribution channels
 
