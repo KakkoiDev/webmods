@@ -105,12 +105,20 @@ Used for exactly one rule: removing the Origin header from the extension's own r
 
 ## Screenshots
 
-At least one, up to five, each exactly 1280x800 or 640x400. Not automatable - the API cannot upload screenshots, so these go in by hand on the dashboard.
+Two are built and ready to upload, both exactly 1280x800:
 
-Capture them from a self-DM or a scratch channel: whatever is on screen becomes public on the listing, and a real channel would publish colleagues' messages. Then pad to size:
+1. `store-screenshot-1.png` - composer before/after, "Translate your draft before you send it"
+2. `store-screenshot-2.png` - the settings dialog, "Bring your own key: Gemini, Claude, or a local Ollama model"
+
+Uploading them is manual; the API cannot do screenshots.
+
+They were composed rather than padded, because the raw captures (402x251 and 542x252) would have needed a 2-3x upscale to fill the frame:
 
 ```sh
-node skills/chrome-web-store/scripts/pad-screenshot.mjs shot.png
+node skills/chrome-web-store/scripts/frame-screenshot.mjs extensions/slack-ai-translate/store-screenshot-1.png \
+  --shot=before.png --shot=after.png --scale=1.15 --caption="Translate your draft before you send it"
 ```
 
-Worth showing: a message mid-translation or translated with the "See original" link visible, and the settings dialog with the provider picker.
+Capture only from a self-DM or a scratch channel - whatever is on screen becomes public on the listing.
+
+**Gap:** both screenshots show composer translation. The description leads with translating *received* messages, and nothing pictures it. A third shot - a message hovered, its toolbar globe visible, then translated with "See original" - would cover the headline feature.

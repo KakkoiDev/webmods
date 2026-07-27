@@ -31,6 +31,7 @@ Per extension, in `extensions/<name>/`:
 Skill scripts, in `skills/chrome-web-store/scripts/`:
 - `make-zip.mjs` - package the upload zip (runtime files derived from the manifest).
 - `pad-screenshot.mjs` - resize/letterbox a screenshot to a valid size.
+- `frame-screenshot.mjs` - compose a captured PNG (or a before/after pair) onto a branded canvas at native scale, for captures too small to pad without blurring.
 - `get-refresh-token.mjs` - one-off OAuth loopback flow to mint the API refresh token.
 - `keyring.mjs` + `cws-keychain.mjs` - store the API creds in the OS keyring (macOS Keychain / Linux libsecret).
 - `cws-publish.mjs` - upload a new zip to the item and publish (API version-updates only; resolves each cred from env then the keyring).
@@ -61,6 +62,15 @@ node skills/chrome-web-store/scripts/pad-screenshot.mjs shot.png --size=640x400 
 ```
 
 macOS (uses `sips`). It letterboxes on `--bg` and prints a **WARNING** when the source was not the target ratio (you'll get bars top/bottom or left/right). For a full-bleed image, capture at the target size directly. You still upload screenshots by hand in the dashboard - the API can't.
+
+**When the capture is much smaller than 1280x800**, padding means a 2-3x upscale and visible softness on the first thing anyone sees. Compose instead - the UI stays at native scale on a branded canvas, with a caption doing the work of filling the frame:
+
+```sh
+node skills/chrome-web-store/scripts/frame-screenshot.mjs out.png \
+  --shot=before.png --shot=after.png --scale=1.15 --caption="Translate your draft before you send it"
+```
+
+Two `--shot`s sit side by side, which is how a before/after pair fits one screenshot. `--scale` multiplies the source's natural size (keep it at or below ~1.2 to stay crisp), `--bg` sets the gradient base, `--size` defaults to 1280x800. Uses the same borrowed Puppeteer as `tools/make-icons.mjs`, so run it from the repo root. Worked example: `extensions/slack-ai-translate/store-screenshot-*.png`.
 
 ## Step 3 - first publish (dashboard, once per extension)
 
