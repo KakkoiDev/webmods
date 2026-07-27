@@ -3,7 +3,7 @@
 Canonical, paste-ready copy for the Developer Dashboard listing. Written to CWS limits (summary <= 132 chars, description <= 16000).
 
 - **Product name:** Slack AI Translate
-- **Item ID:** _TBD - minted by the dashboard on first publish. Record it here, then export as `CWS_EXTENSION_ID` or pass `--id=` to `cws-publish.mjs` (the Keychain currently holds the Notion extension's ID, so `--id=` is mandatory until this is set)._
+- **Item ID:** `cmoodpgkclmmhjbppfcbhjnljpmlmbnp` (submitted for review 2026-07-27). Pass `--id=cmoodpgkclmmhjbppfcbhjnljpmlmbnp` to `cws-publish.mjs` for version updates - the Keychain's `CWS_EXTENSION_ID` holds the *Notion* extension's ID, so `--id=` is mandatory.
 - **Category:** Communication (`CATEGORY_COMMUNICATION`)
 - **Language:** English
 - **Store icon:** `store-icon-128.png` (128x128; 96x96 artwork + 16px transparent padding per CWS guidelines). Do NOT use the manifest's `icons/icon-128.png` here - those are full-bleed for the toolbar.

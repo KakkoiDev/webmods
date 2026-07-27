@@ -30,4 +30,6 @@ The extension has its own storage. On first run you re-enter the API key here, e
 
 Unpacked is dev-only. For colleagues, this goes on the Chrome Web Store as an **unlisted** item. Store assets are ready: [`store-listing.md`](store-listing.md) (paste-ready copy, data-usage answers, per-permission justifications), [`PRIVACY.md`](PRIVACY.md), and `store-icon-128.png`. Build the upload bundle with `node skills/chrome-web-store/scripts/make-zip.mjs extensions/slack-ai-translate`.
 
-Two things still need a human: the **screenshots** (the API cannot upload them) and the **first publish**, which only the dashboard can do because it is what mints the item ID. Every version after that is headless. Walkthrough: [CHROME-WEB-STORE.md](../../docs/CHROME-WEB-STORE.md).
+**Status: submitted for review 2026-07-27**, item ID `cmoodpgkclmmhjbppfcbhjnljpmlmbnp`, Unlisted, set to publish automatically once it passes. The dashboard warned that the host permissions trigger an in-depth review, so expect this to take longer than a permission-free extension.
+
+The whole dashboard flow was driven by `skills/chrome-web-store/scripts/dashboard.mjs` (see the skill for how it attaches to a signed-in Chrome). Version updates from here use the API: `make-zip.mjs` then `cws-publish.mjs --id=cmoodpgkclmmhjbppfcbhjnljpmlmbnp`. Walkthrough: [CHROME-WEB-STORE.md](../../docs/CHROME-WEB-STORE.md).
