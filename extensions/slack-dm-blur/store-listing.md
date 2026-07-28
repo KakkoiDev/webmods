@@ -3,7 +3,7 @@
 Canonical, paste-ready copy for the Developer Dashboard listing. Written to CWS limits (summary <= 132 chars, description <= 16000).
 
 - **Product name:** Slack DM Blur
-- **Item ID:** _not yet submitted_. The first publish is dashboard-only and mints the ID; record it here afterwards, then pass `--id=<id>` to `cws-publish.mjs` for version updates (the Keychain's `CWS_EXTENSION_ID` holds a different extension's ID, so `--id=` is mandatory).
+- **Item ID:** `pofejeaihedkldjdocodfokkddnejejh` (created 2026-07-28). Pass `--id=pofejeaihedkldjdocodfokkddnejejh` to `cws-publish.mjs` for version updates - the Keychain's `CWS_EXTENSION_ID` holds a different extension's ID, so `--id=` is mandatory.
 - **Category:** Communication (`CATEGORY_COMMUNICATION`)
 - **Language:** English
 - **Store icon:** `store-icon-128.png` (128x128; 96x96 artwork + 16px transparent padding per CWS guidelines). Do NOT use the manifest's `icons/icon-128.png` here - those are full-bleed for the toolbar.
@@ -69,7 +69,9 @@ Then certify all three, all of which hold:
 
 ## Permission justifications
 
-The extension declares **no `permissions` and no `host_permissions`**, so those fields should be empty. The only access it has is the content-script match on `app.slack.com`. If review asks about it:
+The extension declares **no `permissions` and no `host_permissions`**, so those fields should be empty. The only access it has is the content-script match on `app.slack.com`.
+
+**Host permission justification** - the dashboard has one field for it, and the automation reads this block:
 
 ```
 The extension runs only on app.slack.com, where it adds one toggle button to the Direct Messages header and applies a CSS blur to the rows of the DM list while that toggle is on. It reads no message content and makes no network requests of any kind. The host match is required only to place that button and that style on the Slack page.
@@ -77,14 +79,14 @@ The extension runs only on app.slack.com, where it adds one toggle button to the
 
 ## Screenshots
 
-`store-screenshot-1280x800.png`, a before/after pair with the blur off on the left and on on the right.
+`store-screenshot-1.png` (1280x800), a before/after pair with the blur off on the left and on on the right. The `store-screenshot-N.png` name is the convention `dashboard.mjs` globs for.
 
 It is **generated, not captured**, by `tools/shot-slack-dm-blur.mjs` + `frame-screenshot.mjs`:
 
 ```sh
 node tools/shot-slack-dm-blur.mjs
 node skills/chrome-web-store/scripts/frame-screenshot.mjs \
-  extensions/slack-dm-blur/store-screenshot-1280x800.png \
+  extensions/slack-dm-blur/store-screenshot-1.png \
   --shot=/tmp/dm-blur-off.png --shot=/tmp/dm-blur-on.png --scale=1.0 --bg=4A154B \
   --caption="One switch before you share your screen"
 ```
