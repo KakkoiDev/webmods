@@ -11,6 +11,39 @@ The dashboard-only steps (create item, listing copy, screenshots, privacy answer
 
 Before changing that script, read **[CHROME-WEB-STORE-AUTOMATION.md](CHROME-WEB-STORE-AUTOMATION.md)** - every dashboard trap hit while publishing `slack-ai-translate`, most of which fail by silently doing nothing rather than by throwing.
 
+## What every listing has to have, whatever the extension
+
+The dashboard blocks Submit until all of this exists. None of it is optional, and none of it depends on what the extension does - an extension with zero permissions that collects nothing still answers every one of these. Everything except the screenshots and the account settings is generated or read from the repo.
+
+**Store listing tab**
+
+| Field | Where it comes from | Notes |
+|---|---|---|
+| Product name | manifest `name` | set by the zip upload |
+| Description | `store-listing.md`, the long fenced block | <= 16000 chars |
+| Category | `store-listing.md` **Category:** | one of the list at the end of the skill |
+| Language | `store-listing.md` **Language:** | |
+| Store icon | `store-icon-128.png` | 128x128, art at 96x96 + transparent padding. **Not** the manifest's full-bleed `icons/icon-128.png` |
+| At least one screenshot | `store-screenshot-N.png` | exactly 1280x800 or 640x400. `dashboard.mjs` globs that `-N` name |
+
+A **Summary** (<= 132 chars) also lives in `store-listing.md`. The dashboard does not always expose the field, but write it anyway - it is what a store card shows.
+
+**Privacy tab**
+
+| Field | Where it comes from | Notes |
+|---|---|---|
+| Single purpose description | `store-listing.md` **Single purpose** block | |
+| Host permission justification | **Host permission justification** block | Required whenever `content_scripts.matches` names a host, **even with no `permissions` and no `host_permissions`** |
+| Per-permission justification | a **`permission`** block per declared permission | only for what the manifest declares |
+| Privacy policy URL | **Privacy policy URL:** bullet | must be **live** before submitting - review fails on a 404, so the repo has to be pushed first |
+| Data usage - all 9 categories | bolded bullets under **Data usage declarations** | answer every category, including "none of them" |
+| Remote code Yes/No | fixed `No` for generated extensions | all code ships in the package |
+| 3 compliance certifications | `certify` | the developer's own attestation; these are what keep Submit disabled once everything else is filled |
+
+**Distribution tab:** Payments (Free of charge), Visibility (Public / Unlisted / Private), regions.
+
+**Account settings, once per publisher:** a **verified** contact email. Publishing is blocked until it is verified.
+
 ## 1. Register the developer account (one-time)
 
 1. Go to the **[Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole)** and sign in with the Google account you want to own the listings (a work/team account is better than a personal one - the listings belong to whoever owns it).

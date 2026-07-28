@@ -71,6 +71,12 @@ const __label = (el) => {
     }
     return '';
 };
+// Only a real form control can hold text. __label walks UP the tree, so a plain
+// "element whose label starts with X" match hits the section wrapper div long before the
+// field itself - and assigning .value to a div succeeds silently, which is how a fill run
+// once reported the right character counts for a tab that stayed empty.
+const __editable = (el) => el.tagName === 'TEXTAREA'
+    || (el.tagName === 'INPUT' && ['text', 'url', 'search', 'email', ''].includes(el.type));
 // text of the nearest ancestor that has any - how radios and checkboxes are identified
 const __near = (el) => {
     let n = el, t = '';
@@ -138,6 +144,11 @@ export async function attach() {
         await browser.disconnect();
         throw new Error('That Chrome is signed out. Sign in to the dashboard in it, then re-run.');
     }
+    // An occluded or background tab stops producing frames, and anything that waits on the
+    // compositor - notably Puppeteer's ElementHandle.click, which scrolls into view first -
+    // then blocks for the whole protocolTimeout. Raising the tab is what makes an unattended
+    // run behave like a watched one.
+    await page.bringToFront().catch(() => {});
     // A native dialog blocks the renderer, and every later CDP call - even attaching -
     // then times out with no hint why. The dashboard raises beforeunload on any navigation
     // with unsaved edits, so without this an unattended run wedges permanently.
@@ -188,14 +199,42 @@ async function clickAt(page, locate, what) {
 const rectOf = `(el) => { el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect();
     return r.width && r.height ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null; }`;
 
+// Text goes in as real browser input (Input.insertText), never as `el.value = …`. Assigning
+// the property leaves the DOM looking right while the form's own model stays empty, so the
+// read-back passes, the next re-render repaints the field from that empty model, and the
+// draft saves blank. Symptom: a fill run reports the right character counts and the tab is
+// empty afterwards. sendCharacter inserts the whole string in one CDP call, so it is also
+// not the per-keystroke .type() that times out on a long description.
 export async function setField(page, labelPrefix, value, opts = {}) {
-    const len = await evalPage(page, (labelPrefix, value, opts) => {
-        const el = __all().find((e) => __vis(e)
+    const box = await evalPage(page, (labelPrefix, opts) => {
+        const el = __all().find((e) => __vis(e) && __editable(e)
             && (!opts.tag || e.tagName.toLowerCase() === opts.tag)
             && __label(e).startsWith(labelPrefix));
-        return el ? __setValue(el, value) : -1;
-    }, labelPrefix, value, opts);
-    if (len === -1) throw new Error(`field "${labelPrefix}" not found`);
+        if (!el) return null;
+        el.scrollIntoView({ block: 'center' });
+        const r = el.getBoundingClientRect();
+        return r.width ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null;
+    }, labelPrefix, opts);
+    if (!box) throw new Error(`field "${labelPrefix}" not found`);
+
+    await page.mouse.click(box.x, box.y);
+    await sleep(300);
+    await page.keyboard.down(process.platform === 'darwin' ? 'Meta' : 'Control');
+    await page.keyboard.press('KeyA');
+    await page.keyboard.up(process.platform === 'darwin' ? 'Meta' : 'Control');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.sendCharacter(value);
+    await sleep(400);
+
+    const len = await evalPage(page, (labelPrefix, opts) => {
+        const el = __all().find((e) => __vis(e) && __editable(e)
+            && (!opts.tag || e.tagName.toLowerCase() === opts.tag)
+            && __label(e).startsWith(labelPrefix));
+        if (!el) return -1;
+        el.blur();
+        return (el.value || '').length;
+    }, labelPrefix, opts);
+    if (len === -1) throw new Error(`field "${labelPrefix}" vanished while typing`);
     if (len !== value.length) throw new Error(`field "${labelPrefix}" holds ${len} chars, expected ${value.length}`);
     return len;
 }
@@ -227,17 +266,29 @@ export async function pickRadio(page, labelPrefix) {
     return true;
 }
 
-export async function setCheckbox(page, labelPrefix, want = true) {
+export async function setCheckbox(page, labelPrefix, want = true, optional = false) {
     const state = await evalPage(page, (p, want) => {
         const cb = __all().find((e) => e.tagName === 'INPUT' && e.type === 'checkbox' && __vis(e) && __near(e).startsWith(p));
         if (!cb) return null;
         if (cb.checked !== want) cb.click();
         return cb.checked;
     }, labelPrefix, want);
-    if (state === null) throw new Error(`checkbox "${labelPrefix}" not found`);
+    if (state === null) {
+        if (optional) return null;
+        throw new Error(`checkbox "${labelPrefix}" not found`);
+    }
     if (state !== want) throw new Error(`checkbox "${labelPrefix}" is ${state}, wanted ${want}`);
     return state;
 }
+
+// The dashboard's data-collection types. Every one is set explicitly from store-listing.md,
+// so a declaration is the same whether the item is new or is being corrected - leaving a box
+// alone would silently keep a claim the listing no longer makes.
+export const DATA_CATEGORIES = [
+    'Personally identifiable information', 'Health information', 'Financial and payment information',
+    'Authentication information', 'Personal communications', 'Location', 'Web history',
+    'User activity', 'Website content',
+];
 
 // Comboboxes: open, then pick. Options exist in the DOM while closed (0x0), so visibility is
 // what distinguishes an open menu; long lists scroll inside their own overlay, so the option
@@ -339,7 +390,13 @@ export function readListing(extDir) {
         permissions: Object.fromEntries(
             [...md.matchAll(/\*\*`([a-zA-Z]+)`\*\*\n\n```\n([\s\S]*?)\n```/g)].map((m) => [m[1], m[2]])
         ),
+        // data-collection types to declare: the bolded bullets under "## Data usage".
+        // An extension that collects nothing declares none, and the section says so in prose.
+        dataUsage: [...(md.match(/##\s*Data usage[^\n]*\n([\s\S]*?)(?=\n## |$)/)?.[1] ?? '')
+            .matchAll(/^- \*\*([^*]+)\*\*/gm)].map((m) => m[1].trim()),
     };
+    const unknown = cfg.dataUsage.filter((c) => !DATA_CATEGORIES.includes(c));
+    if (unknown.length) throw new Error(`unknown data-usage categories: ${unknown.join(', ')}`);
     const missing = Object.entries({
         description: cfg.description, singlePurpose: cfg.singlePurpose, category: cfg.category,
         privacyUrl: cfg.privacyUrl, hostJustification: cfg.hostJustification,
@@ -393,9 +450,11 @@ async function fillPrivacy(page, cfg) {
         console.error(`${perm}: ${await setField(page, `${perm} justification`, text)} chars`);
     }
     console.error(`privacy url: ${await setField(page, 'Privacy policy URL', cfg.privacyUrl)} chars`);
-    for (const cat of ['Personal communications', 'Authentication information']) {
-        await setCheckbox(page, cat, true);
-        console.error(`data usage: ${cat}`);
+    for (const cat of DATA_CATEGORIES) {
+        const want = cfg.dataUsage.includes(cat);
+        const state = await setCheckbox(page, cat, want, true);
+        if (state === null && want) throw new Error(`data-usage category "${cat}" not found on the page`);
+        if (state !== null) console.error(`data usage: ${cat} = ${state}`);
     }
     // Separate from the field fills on purpose: this click re-renders the section, and
     // batching it into the same evaluate once wedged the whole renderer.
@@ -458,8 +517,18 @@ if (isCli) {
         const { browser, page } = await attach();
         // networkidle2 never fires on this SPA; wait for the control, not the network
         await page.goto(DEVCONSOLE, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        const add = await page.waitForSelector('>>> button[aria-label="Add a new item"]', { timeout: 60000 });
-        await add.click();
+        await page.waitForSelector('>>> button[aria-label="Add a new item"]', { timeout: 60000 });
+        // In-page click, like every other interaction here. ElementHandle.click scrolls into
+        // view via the compositor and hangs for the full protocolTimeout on a tab Chrome is
+        // not painting; a plain el.click() needs no frames.
+        const clicked = await evalPage(page, () => {
+            __dismiss();
+            const btn = __all().find((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === 'Add a new item' && __vis(e));
+            if (!btn) return false;
+            btn.click();
+            return true;
+        });
+        if (!clicked) throw new Error('Add-new-item button not found');
         await sleep(4000);
         const ready = await evalPage(page, () => !!__all().find((e) => e.tagName === 'INPUT' && e.type === 'file'));
         if (!ready) throw new Error('Add-new-item dialog did not open');
@@ -577,7 +646,7 @@ if (isCli) {
         // the status header lags the submission by several seconds; poll rather than
         // reading once and reporting a stale "Draft"
         let status = null;
-        for (let i = 0; i < 12; i++) {
+        for (let i = 0; i < 36; i++) {
             await sleep(5000);
             status = (await reportStatus(page)).status;
             if (status && !/^Draft/i.test(status)) break;
@@ -585,7 +654,11 @@ if (isCli) {
         }
         await recon(page, 'submitted');
         console.error(`status: ${status}`);
-        if (/^Draft/i.test(status || '')) throw new Error('still Draft - submission did not take');
+        // The header can lag the submission by minutes. Re-read with `status` before
+        // believing this and never re-submit on it - that is how duplicates happen.
+        if (/^Draft/i.test(status || '')) {
+            throw new Error('still Draft after 3 minutes - re-run `status` before assuming it failed');
+        }
 
     } else {
         console.error(`unknown step: ${step}`);

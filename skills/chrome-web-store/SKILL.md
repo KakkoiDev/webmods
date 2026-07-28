@@ -76,20 +76,25 @@ Two `--shot`s sit side by side, which is how a before/after pair fits one screen
 
 `dashboard.mjs` automates the dashboard-only parts: creating the item, the listing copy, screenshots, the privacy answers, and visibility. It reads everything from the extension's own `store-listing.md`, so the repo stays the source of truth and nothing per-extension is baked into the script.
 
-**Sign in first, by hand, in a normal Chrome.** Google refuses its sign-in flow inside a Puppeteer-launched browser (*"This browser or app may not be secure"*) and no flag or user-agent tweak reliably beats it. The script only ever attaches to a session you authenticated yourself:
+**Sign in by hand once.** Google refuses its sign-in *flow* inside a Puppeteer-launched browser (*"This browser or app may not be secure"*) and no flag or user-agent tweak reliably beats it. The script only ever attaches to a session that was authenticated outside automation.
+
+**After that first sign-in the launch is unattended.** `~/.cache/chrome-web-store/chrome-profile` keeps the session, and running an already-authenticated profile is not what Google blocks - so on every later publish the agent starts Chrome itself with the same command:
 
 ```sh
-# 1. you launch a real Chrome and sign in by hand in this window
+# launch it (skip if http://127.0.0.1:9222/json/version already answers)
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
   --user-data-dir="$HOME/.cache/chrome-web-store/chrome-profile" \
   --no-first-run --no-default-browser-check \
   "https://chrome.google.com/webstore/devconsole" &
 
-# 2. everything else is the script
 node skills/chrome-web-store/scripts/dashboard.mjs all extensions/<name>   # create + fill + save
 node skills/chrome-web-store/scripts/dashboard.mjs status                  # what still blocks submit
 ```
+
+A `devconsole/<uuid>/` URL in `curl -s http://127.0.0.1:9222/json/list` means the session is live. If the profile has logged out, `attach()` says so instead of hanging, and a human signs in once more.
+
+The full list of fields a listing must have, for any extension: **[docs/CHROME-WEB-STORE.md](../../docs/CHROME-WEB-STORE.md#what-every-listing-has-to-have-whatever-the-extension)**.
 
 `all` creates the item, uploads the zip, fills the store listing, the privacy tab and visibility, and saves after each. Single steps for repairs: `newitem | upload | listing [text|icon|shots] | privacy | distribution | save`. Use **`fill`** instead of `all` against an item that already exists - **`all` mints a new item every time**, so re-running it on a published extension produces a duplicate.
 
