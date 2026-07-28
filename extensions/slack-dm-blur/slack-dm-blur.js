@@ -1,3 +1,5 @@
+// GENERATED from scripts/slack-dm-blur.user.js by tools/build-extensions.mjs - do not edit.
+// Edit the source userscript instead; this file is regenerated on commit.
 // ==UserScript==
 // @name         Slack DM Blur
 // @namespace    http://tampermonkey.net/

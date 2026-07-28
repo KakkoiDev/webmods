@@ -1,0 +1,4 @@
+{
+  "userscript": "scripts/slack-dm-blur.user.js",
+  "out": "slack-dm-blur.js"
+}
