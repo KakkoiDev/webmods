@@ -25,8 +25,8 @@ When a script injects UI into a site with hashed class names (Google, Slack, Not
 
 ## Prerequisites
 - A `greasyfork.json` in the cwd. Schema + examples: [references/manifest.md](references/manifest.md). Owner/repo/branch are derived from `git remote` - never hardcode them.
-- Browser tools only: one-time `npm install` in this skill's `scripts/` dir (installs Puppeteer; Chromium is cached under `~/.cache/puppeteer`).
-- Browser tools log in once via a persisted profile (`~/.cache/greasyfork/profile`). The first write opens a visible window on the sign-in page; log in (any method) and it continues automatically. The login tab is never reloaded.
+- Browser tools only: `ego-browser` (ego lite) on `PATH` - they drive it, they do not install or launch a browser of their own. Override the binary with `EGO_BROWSER_BIN`. No `npm install` is needed for these commands (the skill's `scripts/package.json` still installs Puppeteer, but only because `tools/make-icons.mjs`, `tools/shot-*.mjs` and the chrome-web-store skill's `frame-screenshot.mjs` borrow it from there).
+- Browser tools log in once in ego-browser's window. The first write opens the Greasy Fork sign-in page in the `greasyfork release` task space; log in (any method) and it continues automatically. Task spaces share the browser's cookie jar, so the session outlives the space and every later run finds it. The login tab is never reloaded - detection is a same-origin `browserFetch` issued from it.
 
 ## Commands (run from the repo root)
 | Task | Command | Auth |
@@ -49,3 +49,4 @@ When a script injects UI into a site with hashed class names (Google, Slack, Not
 ## Cautions
 - `register.mjs` creates a REAL listing. It refuses to run if the manifest entry already has an `id` (prevents duplicates). Confirm the new id afterward.
 - The write tools DOM-scrape Greasy Fork's forms; they will break when Greasy Fork changes its markup. Selectors are centralized in the scripts. `verify.mjs` (public API) is the stable fallback.
+- Browser work runs as source strings inside `ego-browser nodejs`, not as calls on a `Page` object, and that runtime is not a child process of the script - it gets no env, cwd or argv, and its output is buffered until it exits. Anything a step needs is serialized in as `INPUT`; anything the user must read *while* a step runs (the login prompt) is printed between steps. See the comments in `scripts/lib.mjs`.

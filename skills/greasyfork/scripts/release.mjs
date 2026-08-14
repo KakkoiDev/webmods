@@ -11,13 +11,13 @@
 //                                        #   (use for a new script's first sync, or
 //                                        #    after moving/renaming a file)
 //
-// Requires login (persisted profile). The read/drift steps need none.
+// Requires login (ego-browser task space). The read/drift steps need none.
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import {
   loadManifest, repoInfo, rawUrl, fetchPublished, fetchRawVersion, readLocalVersion,
-  launchBrowser, ensureLoggedIn, syncScriptOnPage,
+  syncScripts,
 } from './lib.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -44,12 +44,15 @@ function runVerify() {
   }
 }
 
-async function syncTargets(targets, page) {
-  for (const s of targets) {
-    const r = await syncScriptOnPage(page, s, info);
+// One browser session drives every target, so the results arrive together and
+// are printed here rather than as each one lands.
+async function syncTargets(targets) {
+  const results = await syncScripts(targets, info);
+  results.forEach((r, i) => {
+    const s = targets[i];
     console.log(`\n[${s.id}] ${s.file} -> ${r.url}`);
     console.log(`  ${r.ok ? 'result: ' + r.message : '!! ' + r.message}`);
-  }
+  });
 }
 
 // Explicit-target mode: wire/re-point sync-from-URL + pull the named scripts.
@@ -61,13 +64,7 @@ if (sel.length) {
     console.error('No matching published scripts in greasyfork.json.');
     process.exit(1);
   }
-  const { browser, page } = await launchBrowser();
-  try {
-    await ensureLoggedIn(page);
-    await syncTargets(targets, page);
-  } finally {
-    await browser.close();
-  }
+  await syncTargets(targets);
   runVerify();
 } else {
   // Default mode: sync only scripts whose published version is behind the local file.
@@ -101,12 +98,6 @@ if (sel.length) {
     pending = await findDrift();
   }
 
-  const { browser, page } = await launchBrowser();
-  try {
-    await ensureLoggedIn(page);
-    await syncTargets(pending.map((p) => p.s), page);
-  } finally {
-    await browser.close();
-  }
+  await syncTargets(pending.map((p) => p.s));
   runVerify();
 }

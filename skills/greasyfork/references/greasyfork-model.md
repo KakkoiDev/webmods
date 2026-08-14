@@ -6,10 +6,12 @@ Verified against Greasy Fork docs/behavior (2026). This is the mental model the 
 Greasy Fork exposes a **read-only** JSON API: `https://api.greasyfork.org/en/scripts/<id>.json` returns `version`, `name`, `code_url`, etc. There is **no** endpoint to create or update script code. Every write in this skill is therefore done by driving the real website in a local browser.
 
 ## Cloudflare => must run locally
-Greasy Fork sits behind Cloudflare. The `cf_clearance` cookie is bound to the IP and User-Agent that solved the challenge. Automation must run on the **user's machine** (their IP) in a **real browser**; a server-side/curl request with copied cookies gets re-challenged and fails. Hence Puppeteer headful + a persisted profile, not an HTTP client.
+Greasy Fork sits behind Cloudflare. The `cf_clearance` cookie is bound to the IP and User-Agent that solved the challenge. Automation must run on the **user's machine** (their IP) in a **real browser**; a server-side/curl request with copied cookies gets re-challenged and fails. Hence a real headful browser, not an HTTP client.
 
-## Auth = persisted browser profile
-No API auth exists. `scripts/lib.mjs` launches Chromium with `userDataDir = ~/.cache/greasyfork/profile`. The user logs in once in the visible window; the session persists for later runs. `ensureLoggedIn` polls in a **separate background tab** (checking `users/webhook-info` for "Setting up a webhook") so the user's login tab is never reloaded mid-input.
+## Auth = the browser's own session
+No API auth exists. `scripts/lib.mjs` drives **ego-browser** (ego lite) through `ego-browser nodejs`, in a named task space (`greasyfork release`) - an isolated set of tabs that shares the browser's cookie jar. The user logs in once in that visible window; the session outlives the space, so later runs find it already there.
+
+`ensureLoggedIn` navigates once to `users/webhook-info` and looks for "Setting up a webhook". Logged out, Greasy Fork redirects that URL to its sign-in page, so the single navigation both tests the session and parks the user where they log in. The poll that follows is a same-origin `browserFetch` issued **from that same page** - not a navigation - so the login tab is never reloaded mid-input.
 
 ## Updates are a PULL, gated on @version
 1. Script source is hosted at a public GitHub **raw** URL.

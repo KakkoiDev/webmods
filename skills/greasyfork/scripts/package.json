@@ -2,7 +2,7 @@
   "name": "greasyfork-skill-scripts",
   "private": true,
   "type": "module",
-  "description": "Browser automation deps for the greasyfork skill. verify.mjs needs none of this.",
+  "description": "Puppeteer, kept here because tools/make-icons.mjs, tools/shot-*.mjs and the chrome-web-store skill's frame-screenshot.mjs borrow it from this dir. This skill's own browser commands no longer use it - they drive ego-browser.",
   "dependencies": {
     "puppeteer": "*"
   }
