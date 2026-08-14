@@ -10,33 +10,22 @@ Two settings shipped wrong because of this - visibility stayed **Public** when t
 
 ## Sign-in
 
-**Google refuses to sign in inside a Puppeteer-launched Chrome.** You get *"This browser or app may not be secure."* No user-agent or flag tweak reliably beats it - Google is detecting the automation launch itself.
+**Historical note (superseded 2026-08-14).** This tool used to run on Puppeteer, and Google refuses to sign in inside a Puppeteer-launched Chrome (*"This browser or app may not be secure"* - it detects the automation launch itself, and no user-agent or flag tweak reliably beats it). The workaround was for the human to start an ordinary Chrome with `--remote-debugging-port=9222` and a separate `--user-data-dir`, sign in by hand, and have the script `puppeteer.connect` to it. **That whole ritual is gone.** If you find it documented anywhere else, that page is stale.
 
-The fix is to never authenticate under automation. The user launches an ordinary Chrome with a debugging port and signs in by hand; the script only ever attaches:
-
-```sh
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$HOME/.cache/chrome-web-store/chrome-profile" \
-  "https://chrome.google.com/webstore/devconsole" &
-```
-
-- The **separate `--user-data-dir` is required**, not hygiene: Chrome refuses `--remote-debugging-port` on the default profile (2025 security change).
-- `puppeteer.connect({browserURL})`, and **`disconnect()`, never `close()`** - the window belongs to the user.
-- Port 9222 is open to any local process while that Chrome runs. Quit it when done.
-
-**The sign-in is one-time, and the launch afterwards is not.** The restriction is on *authenticating* under automation, not on *running* an already-authenticated profile. `~/.cache/chrome-web-store/chrome-profile` keeps the Google session between runs, so on every later publish an agent can start that Chrome itself, unattended, with the exact command above - no human in the loop. Confirmed on 2026-07-28: the profile signed in a day earlier attached straight to the dashboard.
-
-So the sequence for an agentic run is: check the port, launch if nothing answers, then attach.
+The tool now drives **ego-browser** (ego lite) and never launches or attaches to a browser. Everything happens in a task space named `chrome web store`, an isolated set of tabs that inherits the user's login state and, crucially, **stays alive between runs of the script** - which is what lets `newitem` hand an open item to `upload` and `fill`. The step that used to mean "try to launch a browser and fail at Google's sign-in" now means "open the dashboard and tell me who is signed in":
 
 ```sh
-curl -s -m 2 http://127.0.0.1:9222/json/version   # empty -> not running, launch it
-curl -s http://127.0.0.1:9222/json/list | grep -o '"url": "[^"]*"' | head -3
+node .../dashboard.mjs login     # -> "signed in - publisher: <name>", or exit 1
 ```
 
-A `devconsole/<uuid>/` URL in that listing means the session is live. A redirect to `accounts.google.com` means the profile logged out and a human has to sign in once more - `attach()` detects that and says so rather than timing out.
+**The dev console is the one Google surface that still demands its own sign-in.** Measured on 2026-08-14: with the user's session inherited into ego-browser, `drive.google.com`, `mail.google.com` and `myaccount.google.com` all load fully authenticated, while both `chrome.google.com/webstore/devconsole` and `chromewebstore.google.com/devconsole` hard-redirect to the corporate IdP with a password field. So a human still signs in once. Two things make that cheap:
 
-**Importing the module must not launch a browser.** An early version ran its CLI dispatch at import time, so a throwaway script that imported one helper spawned a second Chrome and tripped the automation block - producing a mystifying sign-in popup mid-run. Guard the CLI:
+- It is once. The session lives in the browser's cookie jar, which outlives the task space (verified: a cookie set in one space is visible in the next, and survives `completeTaskSpace`). Later runs find it.
+- The credentials go to the **IdP's** form, not Google's, so the automation heuristic that killed the Puppeteer path does not obviously apply. Confirmed working on 2026-08-14 - `login` reported `publisher: ahirusan3000` and `status` read a real item straight afterwards.
+
+`attach()` is now "find the dashboard tab in the task space and select it". No tab at all -> it says to run `login`. A tab sitting on `accounts.google.com` -> it says the session is signed out, rather than hanging.
+
+**Importing the module must not drive a browser.** An early version ran its CLI dispatch at import time, so a throwaway script that imported one helper spawned a second Chrome and tripped the automation block - producing a mystifying sign-in popup mid-run. Guard the CLI:
 
 ```js
 const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -44,10 +33,12 @@ const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[
 
 ## Native dialogs wedge everything
 
-The dashboard raises a **beforeunload prompt** ("Leave site? Changes you may have made will not be saved") on any navigation with unsaved edits. A native dialog blocks the renderer, and then **every** later CDP call times out - including `puppeteer.connect` itself, with `Network.enable timed out`. The symptom points nowhere near the cause.
+The dashboard raises a **beforeunload prompt** ("Leave site? Changes you may have made will not be saved") on any navigation with unsaved edits. A native dialog blocks the renderer, and then **every** later CDP call times out. The symptom points nowhere near the cause.
+
+There is no `page.on('dialog')` to register on ego-browser. Instead `pageInfo()` resolves to `{ dialog: ... }` instead of the usual `{ url, title, ... }` while one is open, because page JavaScript is blocked - so the check is a read, and the clear is explicit:
 
 ```js
-page.on('dialog', async (d) => { await d.accept().catch(() => {}); });
+if ((await pageInfo()).dialog) await cdp('Page.handleJavaScriptDialog', { accept: true });
 ```
 
 Separately, the in-page **"Unable to publish" / "submitted for review" dialogs** are not native but still swallow every subsequent click. Dismiss them before acting - `attach()` clears one on connect, and `__dismiss()` runs before each navigation.
@@ -64,16 +55,18 @@ The dashboard is Angular Material: heavy shadow DOM, auto-generated ids.
 
 | What | Symptom | Fix |
 |---|---|---|
-| `ElementHandle.click()` on a `>>>`-pierced element | `Node is either not clickable or not an Element`, or hangs | Compute the rect in-page, then `page.mouse.click(x, y)`, or click in-page |
-| `ElementHandle.click()` on an unfocused window | `Runtime.callFunctionOn timed out` after the **full** `protocolTimeout` (4 min) | `page.bringToFront()` on attach, and prefer an in-page `el.click()`. `ElementHandle.click` scrolls into view through the compositor, and a tab Chrome is not painting never produces the frame it waits for. This is why `newitem` hung on "Add a new item" while every other step worked |
-| `ElementHandle.evaluate()` on a pierced element | CDP call hangs until `protocolTimeout` | Use `page.evaluate` and find the element inside the page |
-| `.type()` for a long description | `Runtime.callFunctionOn timed out` at ~2400 chars | `page.keyboard.sendCharacter(value)` - one `Input.insertText`, not one event per character |
+| Any selector-based helper (`click('sel')`, `uploadFile('sel', f)`, `waitForElement`) | `Element not found`, even for an element you can see | They resolve through `document.querySelector`, which reaches **nothing** inside these shadow roots. Compute the rect with `js()` + the shadow walk, then `click([x, y])` |
+| Clicking through the compositor on an unpainted tab | Hangs for minutes | Prefer an in-page `el.click()`; it needs no frame. This is why `newitem` once hung on "Add a new item" while every other step worked |
+| Typing a long description key by key | Times out at ~2400 chars | `cdp('Input.insertText', { text })` - one call, not one event per character. Verified at 2600 chars |
+| **`pressKey('Meta+a')` to select-all** | **Accepted, selects nothing - the new text is appended to the old** | Measured: 2605 chars where 5 were expected. Select with `el.setSelectionRange(0, el.value.length)` in-page, then `Input.insertText` over the selection. That only moves the caret; the replacement is still a real renderer input event |
 | `el.value = text` + synthetic `input`/`change` | **Reports the right character count, saves an empty field** | See below - never assign `.value` |
 | Clicking a Material **radio's label** | Returns cleanly, radio unchanged | Find the real `input[type=radio]` (32x32) via the nearest ancestor text, click it, **then verify `.checked`** |
 | Picking a long dropdown option | `not clickable` for anything below the fold | `scrollIntoView` inside the overlay first - the list scrolls in its own container |
-| Reusing a `data-*` tag between runs | `waitForSelector` matches a stale element | Clear previous tags before tagging |
+| Reusing a `data-*` tag between runs | A stale element matches | Clear previous tags before tagging |
 | Multi-file upload | `Multiple file uploads only work with <input type=file multiple>` | The screenshots input is **not** `multiple` - one file per call, re-finding the input each time because the component re-renders |
-| `waitUntil: 'networkidle2'` | Never resolves | This SPA keeps connections open. Use `domcontentloaded` + `waitForSelector` |
+| Setting a file input in shadow DOM | No helper reaches it | `cdp('Runtime.evaluate')` for the element, then `cdp('DOM.setFileInputFiles', { objectId, files })`. Verified end to end |
+| `waitUntil: 'networkidle2'` / `waitForNetworkIdle()` | Never resolves (it returns `false`) | This SPA keeps connections open. Poll for the control you need |
+| `captureScreenshot(path, { fullPage: true })` | Silently gives you the viewport only | `fullPage` is ignored. Use `Page.getLayoutMetrics` + `Page.captureScreenshot` with `captureBeyondViewport` and write the base64 yourself - and expect no screenshot at all when no window is on screen (see [the runtime section](#a-screenshot-needs-a-window-nothing-else-does)) |
 
 Also: **options exist in the DOM while the menu is closed** (as 0x0 elements), so element presence does not mean the menu is open - check visibility.
 
@@ -87,11 +80,33 @@ The privacy tab reported `single purpose: 145 chars`, `host justification: 336 c
 Both fixes are needed:
 
 - Match only real controls: `TEXTAREA`, or `INPUT` of type text/url/search/email (`__editable` in the script).
-- Put text in as **real browser input** - `page.mouse.click` the field, select-all, `Backspace`, then `page.keyboard.sendCharacter(value)`. `Input.insertText` produces an input event from the renderer, which the form's own model actually observes.
+- Put text in as **real browser input** - click the field at its computed rect, select its contents with `setSelectionRange`, then `Input.insertText`. That produces an input event from the renderer, which the form's own model actually observes.
 
 Why assigning `.value` is unsafe even on the *right* element: the value sits in the DOM while the Angular model stays empty, so the field looks correct until anything re-renders that section - clicking the remote-code radio is enough - and then it repaints from the empty model and the draft saves blank.
 
-**Corollary, and the rule to keep: an in-session read-back proves nothing.** The only trustworthy check is `page.reload()` and re-read. Every field claimed above survived a reload before the item was submitted.
+**Corollary, and the rule to keep: an in-session read-back proves nothing.** The only trustworthy check is to reload the page and re-read. Every field claimed above survived a reload before the item was submitted.
+
+## The ego-browser runtime itself
+
+The page-driving half lives in `dashboard-page.js` and is not run by node: `dashboard.mjs` reads it and feeds it to `ego-browser nodejs`. Five things about that runtime cost real time to find.
+
+| Trap | What happens | Fix |
+|---|---|---|
+| `require` plus top-level `await` | `Cannot determine intended module format because both 'require' and top-level await are present` - and since every step awaits, `require` is simply unavailable | `await import('node:fs')` |
+| `js()` on a source with a top-level `return` | Auto-wrapped in an IIFE, so the value is **thrown away** and you get `null` - with no error | Pass exactly one explicit `(() => { ... })()`, always |
+| No argument channel into the page | `js()` takes a string; there is no `page.evaluate(fn, ...args)` | Serialize arguments into the source (`evalPage` does this) |
+| `cliLog` output is buffered until the process exits | A `fill` would print its entire log at the end - after the minutes in which it was the only sign of life. `stdio: 'inherit'` does not help; the buffering is inside ego | Progress goes to a file the page script appends and `dashboard.mjs` tails; the return value goes to a second file |
+| **`Page.captureScreenshot` with no ego-browser window on screen** | **Blocks until CDP times out** (`CDP request timed out: Page.captureScreenshot`, 15s), on every tab | `recon()` catches it and carries on with the control dump. See below |
+
+The task space is **reused and never completed**. Closing it would throw away both the signed-in session and the item left open for the next step.
+
+### A screenshot needs a window; nothing else does
+
+ego lite keeps its tabs alive with **no window on screen** (`System Events` reports zero windows while the app runs and the tabs answer normally). A renderer with no window is never composited, so it produces no frame and `Page.captureScreenshot` waits for one forever - `Page.bringToFront` succeeds and does not help, `Emulation.setDeviceMetricsOverride` does not either, and it happens on a blank `example.com` tab in a fresh task space just as much as on the dashboard. It is not the page and not the clip.
+
+Everything else works windowless, which was worth measuring rather than assuming: `Runtime.evaluate`, `Page.getLayoutMetrics`, `DOM.setFileInputFiles`, **coordinate clicks** (`click([x, y])` ticked a checkbox and fired its handler) and **`Input.insertText`** (typed into the focused field) all behave normally. So a filling run is unaffected - only the diagnostic picture is lost.
+
+`recon()` therefore treats the screenshot as optional: it logs `no screenshot (...)` and still writes the control dump, which is what an unattended run is actually read from. Open the ego-browser window if you want the picture.
 
 ## Saving and submitting
 

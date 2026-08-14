@@ -76,23 +76,22 @@ Two `--shot`s sit side by side, which is how a before/after pair fits one screen
 
 `dashboard.mjs` automates the dashboard-only parts: creating the item, the listing copy, screenshots, the privacy answers, and visibility. It reads everything from the extension's own `store-listing.md`, so the repo stays the source of truth and nothing per-extension is baked into the script.
 
-**Sign in by hand once.** Google refuses its sign-in *flow* inside a Puppeteer-launched browser (*"This browser or app may not be secure"*) and no flag or user-agent tweak reliably beats it. The script only ever attaches to a session that was authenticated outside automation.
-
-**After that first sign-in the launch is unattended.** `~/.cache/chrome-web-store/chrome-profile` keeps the session, and running an already-authenticated profile is not what Google blocks - so on every later publish the agent starts Chrome itself with the same command:
+**Sign in once, in ego-browser.** The tool drives **ego-browser** (ego lite) and never launches or attaches to a browser of its own. All of its work happens in a task space named `chrome web store`, whose tabs stay alive between runs - which is what lets `newitem` hand an open item to `upload` and `fill`.
 
 ```sh
-# launch it (skip if http://127.0.0.1:9222/json/version already answers)
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$HOME/.cache/chrome-web-store/chrome-profile" \
-  --no-first-run --no-default-browser-check \
-  "https://chrome.google.com/webstore/devconsole" &
+node skills/chrome-web-store/scripts/dashboard.mjs login   # opens the dashboard, prints the publisher
+```
 
+`login` reports `signed in - publisher: <name>` when the session is good, and exits 1 telling you to sign in in that window when it is not. The dev console is the one Google surface that demands a fresh sign-in even when the browser already carries a working Google session (Drive and Gmail load authenticated without it), so expect to do this once; afterwards the session persists in the browser's cookie jar and later runs find it.
+
+It **loads the dashboard afresh** in the task space's existing tab rather than trusting what is on screen - a stale dashboard page keeps rendering long after its session has expired, so only a fresh load proves anything. Run it before starting work, not in the middle of a fill: the reload discards unsaved edits.
+
+```sh
 node skills/chrome-web-store/scripts/dashboard.mjs all extensions/<name>   # create + fill + save
 node skills/chrome-web-store/scripts/dashboard.mjs status                  # what still blocks submit
 ```
 
-A `devconsole/<uuid>/` URL in `curl -s http://127.0.0.1:9222/json/list` means the session is live. If the profile has logged out, `attach()` says so instead of hanging, and a human signs in once more.
+If the task space has no dashboard tab, the step says so and points at `login`; if that tab has logged out, it says that instead of hanging.
 
 The full list of fields a listing must have, for any extension: **[docs/CHROME-WEB-STORE.md](../../docs/CHROME-WEB-STORE.md#what-every-listing-has-to-have-whatever-the-extension)**.
 
@@ -109,7 +108,14 @@ The certifications are the developer's own legal statement and submission cannot
 
 **Verify with `status`, never with the fill log.** It reports the item status, ID, whether Submit is enabled, and the dashboard's own blocker list. This matters more than it sounds: the dashboard silently swallows interactions, and two settings once shipped wrong (visibility stuck on Public, remote code on Yes) while the script reported success. Every mutating helper now re-reads the page and throws if the change did not land.
 
-The full catalogue of dashboard traps - beforeunload wedging CDP, Material radios ignoring label clicks, `.type()` timing out on long text, `networkidle2` never firing, the two-stage submit dialog - is in **[docs/CHROME-WEB-STORE-AUTOMATION.md](../../docs/CHROME-WEB-STORE-AUTOMATION.md)**. Read it before changing `dashboard.mjs`.
+The full catalogue of dashboard traps - beforeunload wedging CDP, Material radios ignoring label clicks, long text timing out, `networkidle2` never firing, the two-stage submit dialog - plus the ego-browser ones (a select-all chord that selects nothing, `js()` voiding a source with a top-level `return`) is in **[docs/CHROME-WEB-STORE-AUTOMATION.md](../../docs/CHROME-WEB-STORE-AUTOMATION.md)**. Read it before changing `dashboard.mjs`.
+
+**Two known bugs, neither introduced by the ego-browser port.** Both were found while verifying it and left alone, because a port is the wrong change to hide a fix in.
+
+- `uploadTo` finds the icon slot by "the first visible element whose label starts with `Store icon`", but once an icon is present that label becomes `Remove image Store icon`, so `listing icon` and the icon part of `fill` throw `file input for "Store icon" not found` on an item that already has one. New items are unaffected, and `Screenshots` is unaffected (its empty slot keeps a `Screenshots ...` label).
+- `status` run while the **item list** is open reports the left nav as blockers: `"PUBLISHER Items Settings ACCOUNT Profile Notifications"`. `reportStatus` reads "the first visible `role=dialog`", and Google's own responsive nav drawer carries that role. On an item page it is right (`(none reported)`), so open the item first and disbelieve a blocker list that reads like a menu.
+
+Both verified against the live listing for `slack-dm-blur` on 2026-08-14.
 
 ## Step 3 - first publish (dashboard, once per extension)
 
