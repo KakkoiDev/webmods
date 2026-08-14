@@ -2,7 +2,7 @@
 // @name         GitHub PR Copy Title + Link
 // @namespace    http://tampermonkey.net/
 // @icon         https://github.githubassets.com/favicons/favicon-dark.png
-// @version      2026.06.15.5
+// @version      2026.08.14.2
 // @description  Adds a button by the PR title that copies the PR link - a named link showing the title in Slack/Notion, the plain URL in editors
 // @author       KakkoiDev
 // @match        https://github.com/*
@@ -29,10 +29,66 @@
     const BTN_ID = 'gh-copy-title-link-btn';
     const TITLE_TEXT = 'Copy title with link';
 
+    // Newest markup first. GitHub re-renders the PR header periodically, so each
+    // entry is tried in order and the first hit wins.
+    const TITLE_SELECTORS = [
+        'h1[data-component="PH_Title"] span.markdown-title',
+        'h1[data-component="PH_Title"]',
+        'bdi.js-issue-title',
+    ];
+
+    // `how` is the insertAdjacentElement position relative to `sel`.
+    const ANCHORS = [
+        // 2026 header: the Edit-title button sits in a <span> next to the <h1>.
+        { sel: 'h1[data-component="PH_Title"] + span button[data-component="IconButton"]', how: 'afterend' },
+        // Same header seen by someone who cannot edit the title: that span holds
+        // only the "#123" text, no button.
+        { sel: 'h1[data-component="PH_Title"] + span', how: 'beforeend' },
+        // Pre-2026 header: the Edit button was a child of the <h1>.
+        { sel: 'h1[data-component="PH_Title"] button[data-component="IconButton"]', how: 'afterend' },
+        { sel: 'h1[data-component="PH_Title"]', how: 'afterend' },
+        { sel: 'bdi.js-issue-title', how: 'afterend' },
+    ];
+
     function getPrInfo() {
         const m = location.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
         if (!m) return null;
         return { owner: m[1], repo: m[2], number: m[3] };
+    }
+
+    function findTitle() {
+        for (const sel of TITLE_SELECTORS) {
+            const el = document.querySelector(sel);
+            if (!el) continue;
+            // The <h1> also carries an sr-only " - #123" node; drop it.
+            const clone = el.cloneNode(true);
+            clone.querySelectorAll('.sr-only').forEach(n => n.remove());
+            const text = clone.textContent.trim();
+            if (text) return text;
+        }
+        return null;
+    }
+
+    function findAnchor() {
+        for (const a of ANCHORS) {
+            const el = document.querySelector(a.sel);
+            if (el) return { el, how: a.how };
+        }
+        return null;
+    }
+
+    // Borrow live GitHub classes so the button matches its neighbours: the
+    // Edit-title button when it exists, otherwise the IconButton on the page
+    // carrying the fewest classes, which is the unmodified base variant.
+    function buttonClassName() {
+        const editBtn = document.querySelector('h1[data-component="PH_Title"] + span button[data-component="IconButton"]');
+        const icons = [...document.querySelectorAll('button[data-component="IconButton"]')];
+        const donor = editBtn || (icons.length
+            ? icons.reduce((a, b) => (b.classList.length < a.classList.length ? b : a))
+            : null);
+        const cls = donor ? donor.className.split(/\s+/).filter(Boolean) : ['btn-octicon'];
+        if (!cls.includes('ml-1')) cls.push('ml-1');
+        return cls.join(' ');
     }
 
     function esc(s) {
@@ -56,10 +112,9 @@
     async function copyTitleLink(btn) {
         const pr = getPrInfo();
         if (!pr) return;
-        const titleSpan = document.querySelector('h1[data-component="PH_Title"] span.markdown-title');
-        if (!titleSpan) return;
+        const title = findTitle();
+        if (!title) return;
 
-        const title = titleSpan.textContent.trim();
         const url = `https://github.com/${pr.owner}/${pr.repo}/pull/${pr.number}`;
         const label = `${title} #${pr.number}`;
         const html = `<a href="${esc(url)}">${esc(label)}</a>`;
@@ -94,13 +149,13 @@
         if (!pr) return;
         if (document.getElementById(BTN_ID)) return;
 
-        const editBtn = document.querySelector('h1[data-component="PH_Title"] button[data-component="IconButton"]');
-        if (!editBtn) return;
+        const anchor = findAnchor();
+        if (!anchor) return;
 
         const btn = document.createElement('button');
         btn.id = BTN_ID;
         btn.type = 'button';
-        btn.className = editBtn.className;
+        btn.className = buttonClassName();
         btn.title = TITLE_TEXT;
         btn.setAttribute('aria-label', TITLE_TEXT);
         btn.innerHTML = COPY_SVG;
@@ -110,7 +165,7 @@
             copyTitleLink(btn);
         });
 
-        editBtn.insertAdjacentElement('afterend', btn);
+        anchor.el.insertAdjacentElement(anchor.how, btn);
     }
 
     addCopyButton();
