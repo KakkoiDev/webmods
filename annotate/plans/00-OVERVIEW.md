@@ -6,13 +6,19 @@ who follows instructions exactly. Do not skip ahead; later plans assume earlier 
 
 Recommended order:
 
-| # | Plan | Why this order |
-|---|------|----------------|
-| 1 | [01-robustness-pass.md](01-robustness-pass.md) | Hardens anchors/SPA/a11y that every later feature relies on |
-| 2 | [02-text-range-annotations.md](02-text-range-annotations.md) | Touches core anchoring; do before adding more UI on top |
-| 3 | [03-ai-chat-pane.md](03-ai-chat-pane.md) | Pure plugin; needs the settings helper added in plan 01 |
-| 4 | [04-global-annotation-browser.md](04-global-annotation-browser.md) | Pure plugin; benefits from range + detached work |
-| 5 | [05-backlog.md](05-backlog.md) | Smaller independent items, pick any after 1–4 |
+| # | Plan | Status | Why this order |
+|---|------|--------|----------------|
+| 1 | [01-robustness-pass.md](01-robustness-pass.md) | ✅ shipped (`b51fb00`) | Hardens anchors/SPA/a11y that every later feature relies on |
+| 2 | [02-text-range-annotations.md](02-text-range-annotations.md) | ✅ shipped (`0116427`) | Touches core anchoring; do before adding more UI on top |
+| 3 | [03-ai-chat-pane.md](03-ai-chat-pane.md) | ✅ shipped (`955b011`) | Pure plugin; needs the settings helper added in plan 01 |
+| 4 | [04-global-annotation-browser.md](04-global-annotation-browser.md) | ✅ shipped (`035546e`) | Pure plugin; benefits from range + detached work |
+| 5 | [05-backlog.md](05-backlog.md) | open | Smaller independent items, pick any after 1–4 |
+
+Plans 1–4 are implemented; read them as the record of what was built and why.
+Deviations worth knowing: range anchoring lives in `src/ranges.ts` (not inside
+`anchors.ts`) with `normalizeText`/`textSimilarity` extracted to
+`src/text-utils.ts` to avoid an import cycle, and `download`/`copyText` were
+extracted to `src/dom-utils.ts` while doing plan 04. Plan 05 is the live backlog.
 
 ## Non-negotiable ground rules
 
