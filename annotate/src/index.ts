@@ -14,6 +14,8 @@ export type { ExcalidrawAttachment, ExcalidrawScene, ExcalidrawPlugin, Excalidra
 export { createDefaultPageIdentityResolver, normalizeUrl, stripOwnFragment, hashString } from "./page-identity";
 export { createDefaultBlockResolver, scoreBlock, buildExcludeFn } from "./blocks";
 export { createAnchor, resolveAnchor, buildSelector, buildXPath, textSimilarity, normalizeText } from "./anchors";
+export { createRangeAnchor, resolveRangeInBlock, blockTextWithMap, buildRange, rangeOffsets } from "./ranges";
+export type { BlockTextMap } from "./ranges";
 export { renderMarkdown } from "./markdown";
 export { createCommandRegistry } from "./commands";
 export { generateId } from "./events";

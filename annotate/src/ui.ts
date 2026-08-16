@@ -16,6 +16,10 @@ const CSS = `
   background: rgba(99, 102, 241, 0.08);
   transition: top 60ms linear, left 60ms linear, width 60ms linear, height 60ms linear;
 }
+.wm-range {
+  position: fixed; pointer-events: none;
+  background: rgba(245, 158, 11, 0.28); border-radius: 2px;
+}
 .wm-flash {
   position: fixed; pointer-events: none;
   border: 2px solid #f59e0b; border-radius: 4px;
@@ -132,6 +136,8 @@ interface NoteCallbacks {
 }
 
 const MODE_TEXT_DEFAULT = "Annotate mode — click a block to add a note (Esc to exit)";
+/** Very long selections wrap into many line boxes; cap what we paint. */
+const MAX_RANGE_RECTS = 50;
 
 export class AnnotatorUI {
   private host: HTMLElement;
@@ -146,6 +152,7 @@ export class AnnotatorUI {
   private composerEl: HTMLElement | null = null;
   private composerReturnFocus: HTMLElement | null = null;
   private markers = new Map<string, { el: HTMLElement; target: Element }>();
+  private rangeBoxes: Array<{ el: HTMLElement; range: Range }> = [];
   private hoverTarget: Element | null = null;
   private tabs: SidebarTab[] = [{ id: "notes", label: "Notes", render: () => {} }];
   private noteActions: NoteAction[] = [];
@@ -265,6 +272,22 @@ export class AnnotatorUI {
     this.notes = notes;
     for (const { el } of this.markers.values()) el.remove();
     this.markers.clear();
+    for (const { el } of this.rangeBoxes) el.remove();
+    this.rangeBoxes = [];
+
+    // Text-range notes paint the selected words; ranges go stale on DOM changes,
+    // so they are rebuilt from scratch on every render.
+    for (const note of notes) {
+      if (note.resolution.status !== "resolved" || !note.resolution.range) continue;
+      const rects = [...note.resolution.range.getClientRects()].slice(0, MAX_RANGE_RECTS);
+      for (const rect of rects) {
+        if (rect.width < 1 || rect.height < 1) continue;
+        const box = this.doc.createElement("div");
+        box.className = "wm-range";
+        this.layer.appendChild(box);
+        this.rangeBoxes.push({ el: box, range: note.resolution.range });
+      }
+    }
 
     if (this.options.showMarkers) {
       let index = 0;
@@ -284,8 +307,9 @@ export class AnnotatorUI {
         this.layer.appendChild(marker);
         this.markers.set(note.annotation.id, { el: marker, target: note.resolution.element });
       }
-      this.repositionMarkers();
     }
+    this.repositionMarkers();
+    this.repositionRanges();
 
     if (this.activeTab === "notes") this.renderNotesTab();
   }
@@ -296,8 +320,33 @@ export class AnnotatorUI {
     requestAnimationFrame(() => {
       this.repositionScheduled = false;
       this.repositionMarkers();
+      this.repositionRanges();
       if (this.hoverTarget) this.positionBox(this.hoverBox, this.hoverTarget);
     });
+  }
+
+  /** Range boxes are laid out per client rect, so wrapped lines each get one. */
+  private repositionRanges(): void {
+    let i = 0;
+    for (const { range } of this.rangeBoxesByRange()) {
+      for (const rect of [...range.getClientRects()].slice(0, MAX_RANGE_RECTS)) {
+        if (rect.width < 1 || rect.height < 1) continue;
+        const box = this.rangeBoxes[i]?.el;
+        if (!box) return;
+        box.style.top = `${rect.top}px`;
+        box.style.left = `${rect.left}px`;
+        box.style.width = `${rect.width}px`;
+        box.style.height = `${rect.height}px`;
+        i++;
+      }
+    }
+  }
+
+  /** Distinct ranges in render order (each may own several boxes). */
+  private rangeBoxesByRange(): Array<{ range: Range }> {
+    const seen: Range[] = [];
+    for (const { range } of this.rangeBoxes) if (!seen.includes(range)) seen.push(range);
+    return seen.map((range) => ({ range }));
   }
 
   private repositionMarkers(): void {
@@ -549,6 +598,12 @@ export class AnnotatorUI {
         const badge = this.doc.createElement("span");
         badge.className = "wm-badge wm-badge-detached";
         badge.textContent = "detached";
+        context.appendChild(badge);
+      } else if (note.annotation.anchor.kind === "range" && note.resolution.status === "resolved" && !note.resolution.range) {
+        // The block is still here but its quoted words are not.
+        const badge = this.doc.createElement("span");
+        badge.className = "wm-badge wm-badge-attach";
+        badge.textContent = "text moved";
         context.appendChild(badge);
       }
       if (note.annotation.attachments?.length) {

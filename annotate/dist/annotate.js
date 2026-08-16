@@ -26,7 +26,9 @@ var WebmodsAnnotate = (() => {
     INLINE_FRAGMENT_PARAM: () => INLINE_FRAGMENT_PARAM,
     NOTE_FRAGMENT_PARAM: () => NOTE_FRAGMENT_PARAM,
     SCHEMA_VERSION: () => SCHEMA_VERSION,
+    blockTextWithMap: () => blockTextWithMap,
     buildExcludeFn: () => buildExcludeFn,
+    buildRange: () => buildRange,
     buildSelector: () => buildSelector,
     buildXPath: () => buildXPath,
     create: () => createAnnotator,
@@ -40,6 +42,7 @@ var WebmodsAnnotate = (() => {
     createLocalStorageStorage: () => createLocalStorageStorage,
     createMemoryStorage: () => createMemoryStorage,
     createPortableDataPlugin: () => createPortableDataPlugin,
+    createRangeAnchor: () => createRangeAnchor,
     createTampermonkeyStorage: () => createTampermonkeyStorage,
     emptyDB: () => emptyDB,
     generateId: () => generateId,
@@ -51,8 +54,10 @@ var WebmodsAnnotate = (() => {
     migrateDB: () => migrateDB,
     normalizeText: () => normalizeText,
     normalizeUrl: () => normalizeUrl,
+    rangeOffsets: () => rangeOffsets,
     renderMarkdown: () => renderMarkdown,
     resolveAnchor: () => resolveAnchor,
+    resolveRangeInBlock: () => resolveRangeInBlock,
     scoreBlock: () => scoreBlock,
     stripOwnFragment: () => stripOwnFragment,
     tampermonkeyStorage: () => createTampermonkeyStorage,
@@ -60,237 +65,6 @@ var WebmodsAnnotate = (() => {
     validateAnnotation: () => validateAnnotation,
     validateExportDocument: () => validateExportDocument
   });
-
-  // src/anchors.ts
-  var QUOTE_MAX = 300;
-  var CONTEXT_MAX = 60;
-  var STABLE_ATTRS = ["id", "data-testid", "data-qa", "data-test", "name", "aria-label", "role", "href", "title"];
-  function normalizeText(text) {
-    return text.replace(/\s+/g, " ").trim();
-  }
-  function blockText(el) {
-    return normalizeText(el.textContent || "");
-  }
-  function looksGenerated(value) {
-    if (/^(css|sc|jsx)-/.test(value)) return true;
-    if (/[0-9a-f]{8}-[0-9a-f]{4}/i.test(value)) return true;
-    if (value.length >= 12 && !/[-_]/.test(value) && /\d/.test(value)) return true;
-    return false;
-  }
-  function cssEscape(value) {
-    if (typeof CSS !== "undefined" && CSS.escape) return CSS.escape(value);
-    return value.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
-  }
-  function buildSelector(el) {
-    const parts = [];
-    let cur = el;
-    while (cur && cur.tagName !== "HTML" && parts.length < 8) {
-      const tag = cur.tagName.toLowerCase();
-      const id = cur.getAttribute("id");
-      if (id && !/\d{3,}/.test(id) && !looksGenerated(id)) {
-        parts.unshift(`#${cssEscape(id)}`);
-        break;
-      }
-      const testAttr = ["data-testid", "data-qa", "data-test"].find((a) => cur.getAttribute(a));
-      if (testAttr) {
-        parts.unshift(`${tag}[${testAttr}="${cur.getAttribute(testAttr).replace(/"/g, '\\"')}"]`);
-        cur = cur.parentElement;
-        continue;
-      }
-      const parent = cur.parentElement;
-      if (parent) {
-        const sameTag = Array.from(parent.children).filter((c) => c.tagName === cur.tagName);
-        parts.unshift(sameTag.length > 1 ? `${tag}:nth-of-type(${sameTag.indexOf(cur) + 1})` : tag);
-      } else {
-        parts.unshift(tag);
-      }
-      cur = parent;
-    }
-    return parts.join(" > ");
-  }
-  function buildXPath(el) {
-    const parts = [];
-    let cur = el;
-    while (cur && cur.nodeType === 1 && cur.tagName !== "HTML") {
-      const tag = cur.tagName.toLowerCase();
-      let index = 1;
-      let sib = cur.previousElementSibling;
-      while (sib) {
-        if (sib.tagName === cur.tagName) index++;
-        sib = sib.previousElementSibling;
-      }
-      parts.unshift(`${tag}[${index}]`);
-      cur = cur.parentElement;
-    }
-    return `/html/${parts.join("/")}`;
-  }
-  function nearbyHeading(el) {
-    let cur = el;
-    while (cur && cur.tagName !== "BODY") {
-      let sib = cur.previousElementSibling;
-      while (sib) {
-        if (/^H[1-6]$/.test(sib.tagName)) return blockText(sib).slice(0, 120) || void 0;
-        const inner = sib.querySelector?.("h1,h2,h3,h4,h5,h6");
-        if (inner) return blockText(inner).slice(0, 120) || void 0;
-        sib = sib.previousElementSibling;
-      }
-      cur = cur.parentElement;
-    }
-    return void 0;
-  }
-  function stableAttributes(el) {
-    const attrs = {};
-    for (const name of STABLE_ATTRS) {
-      const value = el.getAttribute(name);
-      if (value && value.length <= 200) attrs[name] = value;
-    }
-    return Object.keys(attrs).length ? attrs : void 0;
-  }
-  function createAnchor(el, url) {
-    const text = blockText(el);
-    const exact = text.slice(0, QUOTE_MAX);
-    let prefix;
-    let suffix;
-    const prev = el.previousElementSibling;
-    const next = el.nextElementSibling;
-    if (prev) prefix = blockText(prev).slice(-CONTEXT_MAX) || void 0;
-    if (next) suffix = blockText(next).slice(0, CONTEXT_MAX) || void 0;
-    return {
-      url,
-      selector: buildSelector(el),
-      xpath: buildXPath(el),
-      textQuote: exact ? { exact, prefix, suffix } : void 0,
-      fingerprint: {
-        tag: el.tagName.toLowerCase(),
-        text: exact || void 0,
-        nearbyHeading: nearbyHeading(el),
-        attributes: stableAttributes(el)
-      }
-    };
-  }
-  function textSimilarity(a, b) {
-    if (a === b) return 1;
-    if (a.length < 2 || b.length < 2) return 0;
-    const bigrams = /* @__PURE__ */ new Map();
-    for (let i = 0; i < a.length - 1; i++) {
-      const bg = a.slice(i, i + 2);
-      bigrams.set(bg, (bigrams.get(bg) || 0) + 1);
-    }
-    let matches = 0;
-    for (let i = 0; i < b.length - 1; i++) {
-      const bg = b.slice(i, i + 2);
-      const count = bigrams.get(bg) || 0;
-      if (count > 0) {
-        matches++;
-        bigrams.set(bg, count - 1);
-      }
-    }
-    return 2 * matches / (a.length + b.length - 2);
-  }
-  var MAX_CANDIDATES = 2e4;
-  function candidateElements(doc, tag) {
-    const selector = tag || "article,section,p,li,blockquote,pre,figure,table,h1,h2,h3,h4,h5,h6,dd,dt,td,th,div";
-    const all = doc.querySelectorAll(selector);
-    const out = [];
-    for (const el of all) {
-      if ((el.textContent || "").trim().length === 0) continue;
-      out.push(el);
-      if (out.length >= MAX_CANDIDATES) break;
-    }
-    return out;
-  }
-  function cachedQuoteText(el, cache) {
-    let text = cache.get(el);
-    if (text === void 0) {
-      text = blockText(el).slice(0, QUOTE_MAX);
-      cache.set(el, text);
-    }
-    return text;
-  }
-  function verifyAgainstQuote(el, anchor, cache) {
-    if (!anchor.textQuote?.exact) return 0.5;
-    return textSimilarity(cachedQuoteText(el, cache), anchor.textQuote.exact);
-  }
-  function fingerprintScore(el, fp, cache) {
-    let score = 0;
-    let weight = 0;
-    if (fp.text) {
-      score += textSimilarity(cachedQuoteText(el, cache), fp.text) * 3;
-      weight += 3;
-    }
-    if (fp.tag) {
-      score += el.tagName.toLowerCase() === fp.tag ? 1 : 0;
-      weight += 1;
-    }
-    if (fp.nearbyHeading) {
-      const heading = nearbyHeading(el);
-      score += heading ? textSimilarity(heading, fp.nearbyHeading) : 0;
-      weight += 1;
-    }
-    if (fp.attributes) {
-      const keys = Object.keys(fp.attributes);
-      let hit = 0;
-      for (const key of keys) if (el.getAttribute(key) === fp.attributes[key]) hit++;
-      score += keys.length ? hit / keys.length : 0;
-      weight += 1;
-    }
-    return weight ? score / weight : 0;
-  }
-  var RESOLVE_THRESHOLD = 0.75;
-  var FUZZY_THRESHOLD = 0.6;
-  function resolveAnchor(anchor, doc) {
-    const cache = /* @__PURE__ */ new WeakMap();
-    if (anchor.selector) {
-      try {
-        const el = doc.querySelector(anchor.selector);
-        if (el) {
-          const confidence = verifyAgainstQuote(el, anchor, cache);
-          if (confidence >= RESOLVE_THRESHOLD) return { status: "resolved", element: el, confidence };
-        }
-      } catch {
-      }
-    }
-    if (anchor.xpath && typeof doc.evaluate === "function") {
-      try {
-        const result = doc.evaluate(anchor.xpath, doc, null, 9, null);
-        const el = result.singleNodeValue;
-        if (el && el.nodeType === 1) {
-          const confidence = verifyAgainstQuote(el, anchor, cache);
-          if (confidence >= RESOLVE_THRESHOLD) return { status: "resolved", element: el, confidence };
-        }
-      } catch {
-      }
-    }
-    const tag = anchor.fingerprint?.tag;
-    if (anchor.textQuote?.exact) {
-      for (const scoped of [tag, void 0]) {
-        const candidates = candidateElements(doc, scoped);
-        let best = null;
-        for (const el of candidates) {
-          if (cachedQuoteText(el, cache) === anchor.textQuote.exact) {
-            if (!best || best.contains(el)) best = el;
-          }
-        }
-        if (best) return { status: "resolved", element: best, confidence: 1 };
-      }
-    }
-    if (anchor.fingerprint) {
-      const candidates = candidateElements(doc, tag);
-      let best = null;
-      let bestScore = 0;
-      for (const el of candidates) {
-        const score = fingerprintScore(el, anchor.fingerprint, cache);
-        if (score > bestScore) {
-          best = el;
-          bestScore = score;
-        }
-      }
-      if (best && bestScore >= FUZZY_THRESHOLD) {
-        return { status: "resolved", element: best, confidence: bestScore };
-      }
-    }
-    return { status: "detached", reason: "no candidate matched with sufficient confidence" };
-  }
 
   // src/blocks.ts
   var SEMANTIC_TAGS = /* @__PURE__ */ new Set([
@@ -399,6 +173,422 @@ var WebmodsAnnotate = (() => {
       if (!best || bestScore < 10) return null;
       return best;
     };
+  }
+
+  // src/text-utils.ts
+  function normalizeText(text) {
+    return text.replace(/\s+/g, " ").trim();
+  }
+  function textSimilarity(a, b) {
+    if (a === b) return 1;
+    if (a.length < 2 || b.length < 2) return 0;
+    const bigrams = /* @__PURE__ */ new Map();
+    for (let i = 0; i < a.length - 1; i++) {
+      const bg = a.slice(i, i + 2);
+      bigrams.set(bg, (bigrams.get(bg) || 0) + 1);
+    }
+    let matches = 0;
+    for (let i = 0; i < b.length - 1; i++) {
+      const bg = b.slice(i, i + 2);
+      const count = bigrams.get(bg) || 0;
+      if (count > 0) {
+        matches++;
+        bigrams.set(bg, count - 1);
+      }
+    }
+    return 2 * matches / (a.length + b.length - 2);
+  }
+
+  // src/ranges.ts
+  var QUOTE_MAX = 300;
+  var CONTEXT_CHARS = 32;
+  function blockTextWithMap(block) {
+    const doc = block.ownerDocument;
+    const walker = doc.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
+      acceptNode(node2) {
+        const parent = node2.parentElement;
+        if (parent?.closest(`[${UI_ATTR}]`)) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    const pieces = [];
+    let raw = "";
+    let node = walker.nextNode();
+    while (node) {
+      pieces.push({ node, start: raw.length, end: raw.length + node.data.length });
+      raw += node.data;
+      node = walker.nextNode();
+    }
+    let text = "";
+    const normToRaw = [];
+    const rawToNorm = new Array(raw.length + 1);
+    let lastWasSpace = false;
+    for (let i = 0; i < raw.length; i++) {
+      rawToNorm[i] = text.length;
+      const ch = raw[i];
+      if (/\s/.test(ch)) {
+        if (lastWasSpace || text.length === 0) continue;
+        text += " ";
+        normToRaw.push(i);
+        lastWasSpace = true;
+      } else {
+        text += ch;
+        normToRaw.push(i);
+        lastWasSpace = false;
+      }
+    }
+    if (text.endsWith(" ")) {
+      text = text.slice(0, -1);
+      normToRaw.pop();
+    }
+    rawToNorm[raw.length] = text.length;
+    for (let i = 0; i <= raw.length; i++) {
+      if (rawToNorm[i] === void 0) rawToNorm[i] = text.length;
+      else rawToNorm[i] = Math.min(rawToNorm[i], text.length);
+    }
+    return { text, pieces, normToRaw, rawToNorm };
+  }
+  function rawToNode(map, rawIndex) {
+    for (const piece of map.pieces) {
+      if (rawIndex >= piece.start && rawIndex < piece.end) {
+        return { node: piece.node, offset: rawIndex - piece.start };
+      }
+    }
+    const last = map.pieces[map.pieces.length - 1];
+    if (last && rawIndex >= last.end) return { node: last.node, offset: last.node.data.length };
+    return null;
+  }
+  function buildRange(map, start, end) {
+    if (start < 0 || end > map.text.length || end <= start) return null;
+    const rawStart = map.normToRaw[start];
+    const rawEnd = map.normToRaw[end - 1];
+    if (rawStart === void 0 || rawEnd === void 0) return null;
+    const from = rawToNode(map, rawStart);
+    const to = rawToNode(map, rawEnd);
+    if (!from || !to) return null;
+    const range = from.node.ownerDocument.createRange();
+    range.setStart(from.node, from.offset);
+    range.setEnd(to.node, Math.min(to.offset + 1, to.node.data.length));
+    return range;
+  }
+  function rangeOffsets(range, map) {
+    let rawStart = Infinity;
+    let rawEnd = -Infinity;
+    for (const piece of map.pieces) {
+      let intersects;
+      try {
+        intersects = range.intersectsNode(piece.node);
+      } catch {
+        intersects = true;
+      }
+      if (!intersects) continue;
+      const s = piece.node === range.startContainer ? range.startOffset : 0;
+      const e = piece.node === range.endContainer ? range.endOffset : piece.node.data.length;
+      if (e <= s) continue;
+      rawStart = Math.min(rawStart, piece.start + s);
+      rawEnd = Math.max(rawEnd, piece.start + e);
+    }
+    if (!Number.isFinite(rawStart) || rawEnd < 0) return null;
+    const start = map.rawToNorm[rawStart] ?? 0;
+    const end = map.rawToNorm[rawEnd] ?? map.text.length;
+    if (end <= start) return null;
+    return { start, end };
+  }
+  function createRangeAnchor(range, block, blockAnchor) {
+    const map = blockTextWithMap(block);
+    const offsets = rangeOffsets(range, map);
+    if (!offsets) return blockAnchor;
+    const exact = map.text.slice(offsets.start, offsets.end).slice(0, QUOTE_MAX);
+    if (!exact.trim()) return blockAnchor;
+    return {
+      ...blockAnchor,
+      kind: "range",
+      textQuote: {
+        exact,
+        prefix: map.text.slice(Math.max(0, offsets.start - CONTEXT_CHARS), offsets.start) || void 0,
+        suffix: map.text.slice(offsets.end, offsets.end + CONTEXT_CHARS) || void 0
+      },
+      textPosition: { start: offsets.start, end: offsets.start + exact.length },
+      fingerprint: blockAnchor.fingerprint
+    };
+  }
+  function contextScore(map, at, length, quote) {
+    let score = 0;
+    if (quote?.prefix) {
+      const before = map.text.slice(Math.max(0, at - quote.prefix.length), at);
+      if (before === quote.prefix) score++;
+    }
+    if (quote?.suffix) {
+      const after = map.text.slice(at + length, at + length + quote.suffix.length);
+      if (after === quote.suffix) score++;
+    }
+    return score;
+  }
+  function resolveRangeInBlock(block, anchor) {
+    const exact = anchor.textQuote?.exact;
+    if (!exact) return null;
+    const map = blockTextWithMap(block);
+    if (!map.text) return null;
+    const pos = anchor.textPosition;
+    if (pos && map.text.slice(pos.start, pos.end) === exact) {
+      return buildRange(map, pos.start, pos.end);
+    }
+    const occurrences = [];
+    for (let i = map.text.indexOf(exact); i !== -1; i = map.text.indexOf(exact, i + 1)) {
+      occurrences.push(i);
+      if (occurrences.length > 50) break;
+    }
+    if (occurrences.length === 1) return buildRange(map, occurrences[0], occurrences[0] + exact.length);
+    if (occurrences.length > 1) {
+      let best = occurrences[0];
+      let bestScore = -Infinity;
+      for (const at of occurrences) {
+        const score = contextScore(map, at, exact.length, anchor.textQuote) * 1e3 - (pos ? Math.abs(at - pos.start) : 0);
+        if (score > bestScore) {
+          bestScore = score;
+          best = at;
+        }
+      }
+      return buildRange(map, best, best + exact.length);
+    }
+    const len = exact.length;
+    if (len < 4 || map.text.length < 4) return null;
+    const coarseStep = Math.max(1, Math.floor(len / 4));
+    let bestAt = -1;
+    let bestSim = 0;
+    for (let at = 0; at + 1 < map.text.length; at += coarseStep) {
+      const sim = textSimilarity(map.text.slice(at, at + len), exact);
+      if (sim > bestSim) {
+        bestSim = sim;
+        bestAt = at;
+      }
+    }
+    if (bestAt < 0) return null;
+    for (let at = Math.max(0, bestAt - coarseStep); at <= Math.min(map.text.length - 1, bestAt + coarseStep); at++) {
+      const sim = textSimilarity(map.text.slice(at, at + len), exact);
+      if (sim > bestSim) {
+        bestSim = sim;
+        bestAt = at;
+      }
+    }
+    if (bestSim < 0.8) return null;
+    return buildRange(map, bestAt, Math.min(map.text.length, bestAt + len));
+  }
+
+  // src/anchors.ts
+  var QUOTE_MAX2 = 300;
+  var CONTEXT_MAX = 60;
+  var STABLE_ATTRS = ["id", "data-testid", "data-qa", "data-test", "name", "aria-label", "role", "href", "title"];
+  function blockText(el) {
+    return normalizeText(el.textContent || "");
+  }
+  function looksGenerated(value) {
+    if (/^(css|sc|jsx)-/.test(value)) return true;
+    if (/[0-9a-f]{8}-[0-9a-f]{4}/i.test(value)) return true;
+    if (value.length >= 12 && !/[-_]/.test(value) && /\d/.test(value)) return true;
+    return false;
+  }
+  function cssEscape(value) {
+    if (typeof CSS !== "undefined" && CSS.escape) return CSS.escape(value);
+    return value.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
+  }
+  function buildSelector(el) {
+    const parts = [];
+    let cur = el;
+    while (cur && cur.tagName !== "HTML" && parts.length < 8) {
+      const tag = cur.tagName.toLowerCase();
+      const id = cur.getAttribute("id");
+      if (id && !/\d{3,}/.test(id) && !looksGenerated(id)) {
+        parts.unshift(`#${cssEscape(id)}`);
+        break;
+      }
+      const testAttr = ["data-testid", "data-qa", "data-test"].find((a) => cur.getAttribute(a));
+      if (testAttr) {
+        parts.unshift(`${tag}[${testAttr}="${cur.getAttribute(testAttr).replace(/"/g, '\\"')}"]`);
+        cur = cur.parentElement;
+        continue;
+      }
+      const parent = cur.parentElement;
+      if (parent) {
+        const sameTag = Array.from(parent.children).filter((c) => c.tagName === cur.tagName);
+        parts.unshift(sameTag.length > 1 ? `${tag}:nth-of-type(${sameTag.indexOf(cur) + 1})` : tag);
+      } else {
+        parts.unshift(tag);
+      }
+      cur = parent;
+    }
+    return parts.join(" > ");
+  }
+  function buildXPath(el) {
+    const parts = [];
+    let cur = el;
+    while (cur && cur.nodeType === 1 && cur.tagName !== "HTML") {
+      const tag = cur.tagName.toLowerCase();
+      let index = 1;
+      let sib = cur.previousElementSibling;
+      while (sib) {
+        if (sib.tagName === cur.tagName) index++;
+        sib = sib.previousElementSibling;
+      }
+      parts.unshift(`${tag}[${index}]`);
+      cur = cur.parentElement;
+    }
+    return `/html/${parts.join("/")}`;
+  }
+  function nearbyHeading(el) {
+    let cur = el;
+    while (cur && cur.tagName !== "BODY") {
+      let sib = cur.previousElementSibling;
+      while (sib) {
+        if (/^H[1-6]$/.test(sib.tagName)) return blockText(sib).slice(0, 120) || void 0;
+        const inner = sib.querySelector?.("h1,h2,h3,h4,h5,h6");
+        if (inner) return blockText(inner).slice(0, 120) || void 0;
+        sib = sib.previousElementSibling;
+      }
+      cur = cur.parentElement;
+    }
+    return void 0;
+  }
+  function stableAttributes(el) {
+    const attrs = {};
+    for (const name of STABLE_ATTRS) {
+      const value = el.getAttribute(name);
+      if (value && value.length <= 200) attrs[name] = value;
+    }
+    return Object.keys(attrs).length ? attrs : void 0;
+  }
+  function createAnchor(el, url) {
+    const text = blockText(el);
+    const exact = text.slice(0, QUOTE_MAX2);
+    let prefix;
+    let suffix;
+    const prev = el.previousElementSibling;
+    const next = el.nextElementSibling;
+    if (prev) prefix = blockText(prev).slice(-CONTEXT_MAX) || void 0;
+    if (next) suffix = blockText(next).slice(0, CONTEXT_MAX) || void 0;
+    return {
+      url,
+      selector: buildSelector(el),
+      xpath: buildXPath(el),
+      textQuote: exact ? { exact, prefix, suffix } : void 0,
+      fingerprint: {
+        tag: el.tagName.toLowerCase(),
+        text: exact || void 0,
+        nearbyHeading: nearbyHeading(el),
+        attributes: stableAttributes(el)
+      }
+    };
+  }
+  var MAX_CANDIDATES = 2e4;
+  function candidateElements(doc, tag) {
+    const selector = tag || "article,section,p,li,blockquote,pre,figure,table,h1,h2,h3,h4,h5,h6,dd,dt,td,th,div";
+    const all = doc.querySelectorAll(selector);
+    const out = [];
+    for (const el of all) {
+      if ((el.textContent || "").trim().length === 0) continue;
+      out.push(el);
+      if (out.length >= MAX_CANDIDATES) break;
+    }
+    return out;
+  }
+  function cachedQuoteText(el, cache) {
+    let text = cache.get(el);
+    if (text === void 0) {
+      text = blockText(el).slice(0, QUOTE_MAX2);
+      cache.set(el, text);
+    }
+    return text;
+  }
+  function verifyAgainstQuote(el, anchor, cache) {
+    if (!anchor.textQuote?.exact) return 0.5;
+    return textSimilarity(cachedQuoteText(el, cache), anchor.textQuote.exact);
+  }
+  function fingerprintScore(el, fp, cache) {
+    let score = 0;
+    let weight = 0;
+    if (fp.text) {
+      score += textSimilarity(cachedQuoteText(el, cache), fp.text) * 3;
+      weight += 3;
+    }
+    if (fp.tag) {
+      score += el.tagName.toLowerCase() === fp.tag ? 1 : 0;
+      weight += 1;
+    }
+    if (fp.nearbyHeading) {
+      const heading = nearbyHeading(el);
+      score += heading ? textSimilarity(heading, fp.nearbyHeading) : 0;
+      weight += 1;
+    }
+    if (fp.attributes) {
+      const keys = Object.keys(fp.attributes);
+      let hit = 0;
+      for (const key of keys) if (el.getAttribute(key) === fp.attributes[key]) hit++;
+      score += keys.length ? hit / keys.length : 0;
+      weight += 1;
+    }
+    return weight ? score / weight : 0;
+  }
+  var RESOLVE_THRESHOLD = 0.75;
+  var FUZZY_THRESHOLD = 0.6;
+  var RANGE_MISS_PENALTY = 0.8;
+  function withRange(resolution, anchor) {
+    if (resolution.status !== "resolved" || anchor.kind !== "range") return resolution;
+    const range = resolveRangeInBlock(resolution.element, anchor);
+    if (range) return { ...resolution, range };
+    return { ...resolution, confidence: resolution.confidence * RANGE_MISS_PENALTY };
+  }
+  function resolveAnchor(anchor, doc) {
+    const cache = /* @__PURE__ */ new WeakMap();
+    if (anchor.selector) {
+      try {
+        const el = doc.querySelector(anchor.selector);
+        if (el) {
+          const confidence = verifyAgainstQuote(el, anchor, cache);
+          if (confidence >= RESOLVE_THRESHOLD) return withRange({ status: "resolved", element: el, confidence }, anchor);
+        }
+      } catch {
+      }
+    }
+    if (anchor.xpath && typeof doc.evaluate === "function") {
+      try {
+        const result = doc.evaluate(anchor.xpath, doc, null, 9, null);
+        const el = result.singleNodeValue;
+        if (el && el.nodeType === 1) {
+          const confidence = verifyAgainstQuote(el, anchor, cache);
+          if (confidence >= RESOLVE_THRESHOLD) return withRange({ status: "resolved", element: el, confidence }, anchor);
+        }
+      } catch {
+      }
+    }
+    const tag = anchor.fingerprint?.tag;
+    if (anchor.textQuote?.exact) {
+      for (const scoped of [tag, void 0]) {
+        const candidates = candidateElements(doc, scoped);
+        let best = null;
+        for (const el of candidates) {
+          if (cachedQuoteText(el, cache) === anchor.textQuote.exact) {
+            if (!best || best.contains(el)) best = el;
+          }
+        }
+        if (best) return withRange({ status: "resolved", element: best, confidence: 1 }, anchor);
+      }
+    }
+    if (anchor.fingerprint) {
+      const candidates = candidateElements(doc, tag);
+      let best = null;
+      let bestScore = 0;
+      for (const el of candidates) {
+        const score = fingerprintScore(el, anchor.fingerprint, cache);
+        if (score > bestScore) {
+          best = el;
+          bestScore = score;
+        }
+      }
+      if (best && bestScore >= FUZZY_THRESHOLD) {
+        return withRange({ status: "resolved", element: best, confidence: bestScore }, anchor);
+      }
+    }
+    return { status: "detached", reason: "no candidate matched with sufficient confidence" };
   }
 
   // src/commands.ts
@@ -877,6 +1067,10 @@ var WebmodsAnnotate = (() => {
   background: rgba(99, 102, 241, 0.08);
   transition: top 60ms linear, left 60ms linear, width 60ms linear, height 60ms linear;
 }
+.wm-range {
+  position: fixed; pointer-events: none;
+  background: rgba(245, 158, 11, 0.28); border-radius: 2px;
+}
 .wm-flash {
   position: fixed; pointer-events: none;
   border: 2px solid #f59e0b; border-radius: 4px;
@@ -973,6 +1167,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
 }
 `;
   var MODE_TEXT_DEFAULT = "Annotate mode \u2014 click a block to add a note (Esc to exit)";
+  var MAX_RANGE_RECTS = 50;
   var AnnotatorUI = class {
     constructor(doc, options, noteCallbacks) {
       this.doc = doc;
@@ -980,6 +1175,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
       this.composerEl = null;
       this.composerReturnFocus = null;
       this.markers = /* @__PURE__ */ new Map();
+      this.rangeBoxes = [];
       this.hoverTarget = null;
       this.tabs = [{ id: "notes", label: "Notes", render: () => {
       } }];
@@ -1079,6 +1275,19 @@ button.wm-btn.wm-danger { color: #d1242f; }
       this.notes = notes;
       for (const { el } of this.markers.values()) el.remove();
       this.markers.clear();
+      for (const { el } of this.rangeBoxes) el.remove();
+      this.rangeBoxes = [];
+      for (const note of notes) {
+        if (note.resolution.status !== "resolved" || !note.resolution.range) continue;
+        const rects = [...note.resolution.range.getClientRects()].slice(0, MAX_RANGE_RECTS);
+        for (const rect of rects) {
+          if (rect.width < 1 || rect.height < 1) continue;
+          const box = this.doc.createElement("div");
+          box.className = "wm-range";
+          this.layer.appendChild(box);
+          this.rangeBoxes.push({ el: box, range: note.resolution.range });
+        }
+      }
       if (this.options.showMarkers) {
         let index = 0;
         for (const note of notes) {
@@ -1097,8 +1306,9 @@ button.wm-btn.wm-danger { color: #d1242f; }
           this.layer.appendChild(marker);
           this.markers.set(note.annotation.id, { el: marker, target: note.resolution.element });
         }
-        this.repositionMarkers();
       }
+      this.repositionMarkers();
+      this.repositionRanges();
       if (this.activeTab === "notes") this.renderNotesTab();
     }
     scheduleReposition() {
@@ -1107,8 +1317,31 @@ button.wm-btn.wm-danger { color: #d1242f; }
       requestAnimationFrame(() => {
         this.repositionScheduled = false;
         this.repositionMarkers();
+        this.repositionRanges();
         if (this.hoverTarget) this.positionBox(this.hoverBox, this.hoverTarget);
       });
+    }
+    /** Range boxes are laid out per client rect, so wrapped lines each get one. */
+    repositionRanges() {
+      let i = 0;
+      for (const { range } of this.rangeBoxesByRange()) {
+        for (const rect of [...range.getClientRects()].slice(0, MAX_RANGE_RECTS)) {
+          if (rect.width < 1 || rect.height < 1) continue;
+          const box = this.rangeBoxes[i]?.el;
+          if (!box) return;
+          box.style.top = `${rect.top}px`;
+          box.style.left = `${rect.left}px`;
+          box.style.width = `${rect.width}px`;
+          box.style.height = `${rect.height}px`;
+          i++;
+        }
+      }
+    }
+    /** Distinct ranges in render order (each may own several boxes). */
+    rangeBoxesByRange() {
+      const seen = [];
+      for (const { range } of this.rangeBoxes) if (!seen.includes(range)) seen.push(range);
+      return seen.map((range) => ({ range }));
     }
     repositionMarkers() {
       const win = this.doc.defaultView;
@@ -1324,6 +1557,11 @@ button.wm-btn.wm-danger { color: #d1242f; }
           const badge = this.doc.createElement("span");
           badge.className = "wm-badge wm-badge-detached";
           badge.textContent = "detached";
+          context.appendChild(badge);
+        } else if (note.annotation.anchor.kind === "range" && note.resolution.status === "resolved" && !note.resolution.range) {
+          const badge = this.doc.createElement("span");
+          badge.className = "wm-badge wm-badge-attach";
+          badge.textContent = "text moved";
           context.appendChild(badge);
         }
         if (note.annotation.attachments?.length) {
@@ -1572,12 +1810,25 @@ button.wm-btn.wm-danger { color: #d1242f; }
         await deleteNote(id);
       }
     }
-    async function composeAt(target) {
-      const anchor = createAnchor(target, page.url);
+    async function composeAt(target, range) {
+      const blockAnchor = createAnchor(target, page.url);
+      const anchor = range ? createRangeAnchor(range, target, blockAnchor) : blockAnchor;
       const result = await ui.openComposer(target, "", false);
       if (result.action === "save" && result.text.trim()) {
         await createNote(anchor, result.text.trim());
       }
+    }
+    function selectionRange() {
+      const selection = win.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+      const range = selection.getRangeAt(0);
+      if (!range.toString().trim()) return null;
+      const container = range.commonAncestorContainer;
+      const el = container instanceof Element ? container : container.parentElement;
+      if (!el || isAnnotatorUI(el)) return null;
+      const block = blockResolver(el, { exclude });
+      if (!block || !block.contains(range.commonAncestorContainer)) return null;
+      return { range, block };
     }
     function setMode(next) {
       if (mode === next || destroyed) return;
@@ -1630,6 +1881,16 @@ button.wm-btn.wm-danger { color: #d1242f; }
       if (!picking() || ui.hasComposerOpen()) return;
       const target = e.target;
       if (!target || !(target instanceof Element) || isAnnotatorUI(target)) return;
+      if (!reanchoringId) {
+        const picked = selectionRange();
+        if (picked) {
+          e.preventDefault();
+          e.stopPropagation();
+          ui.setHoverTarget(null);
+          void composeAt(picked.block, picked.range);
+          return;
+        }
+      }
       const block = hoverEl ?? blockResolver(target, { exclude });
       if (!block) return;
       e.preventDefault();

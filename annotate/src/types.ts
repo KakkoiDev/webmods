@@ -31,15 +31,28 @@ export interface Fingerprint {
 
 export interface Anchor {
   url: string;
+  /** "block" (default when absent) or "range" for a text selection inside a block. */
+  kind?: "block" | "range";
   selector?: string;
   xpath?: string;
   textQuote?: TextQuote;
+  /** Offsets into the block's normalized text; only meaningful for range anchors. */
   textPosition?: { start: number; end: number };
   fingerprint?: Fingerprint;
 }
 
 export type AnchorResolution =
-  | { status: "resolved"; element: Element; confidence: number }
+  | {
+      status: "resolved";
+      element: Element;
+      confidence: number;
+      /**
+       * Present only when a range anchor located its exact text. A range anchor
+       * that found its block but not its text resolves WITHOUT a range rather
+       * than highlighting the wrong words.
+       */
+      range?: Range;
+    }
   | { status: "detached"; reason?: string };
 
 export interface Attachment {

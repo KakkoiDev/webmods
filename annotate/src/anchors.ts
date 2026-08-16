@@ -1,12 +1,12 @@
+import { resolveRangeInBlock } from "./ranges";
+import { normalizeText, textSimilarity } from "./text-utils";
 import type { Anchor, AnchorResolution, Fingerprint } from "./types";
+
+export { normalizeText, textSimilarity } from "./text-utils";
 
 const QUOTE_MAX = 300;
 const CONTEXT_MAX = 60;
 const STABLE_ATTRS = ["id", "data-testid", "data-qa", "data-test", "name", "aria-label", "role", "href", "title"];
-
-export function normalizeText(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
 
 function blockText(el: Element): string {
   return normalizeText(el.textContent || "");
@@ -124,27 +124,6 @@ export function createAnchor(el: Element, url: string): Anchor {
 // Resolution
 // ---------------------------------------------------------------------------
 
-/** Dice coefficient over character bigrams; 0..1. */
-export function textSimilarity(a: string, b: string): number {
-  if (a === b) return 1;
-  if (a.length < 2 || b.length < 2) return 0;
-  const bigrams = new Map<string, number>();
-  for (let i = 0; i < a.length - 1; i++) {
-    const bg = a.slice(i, i + 2);
-    bigrams.set(bg, (bigrams.get(bg) || 0) + 1);
-  }
-  let matches = 0;
-  for (let i = 0; i < b.length - 1; i++) {
-    const bg = b.slice(i, i + 2);
-    const count = bigrams.get(bg) || 0;
-    if (count > 0) {
-      matches++;
-      bigrams.set(bg, count - 1);
-    }
-  }
-  return (2 * matches) / (a.length + b.length - 2);
-}
-
 /** Fuzzy matching over more candidates than this is pointless and janky. */
 const MAX_CANDIDATES = 20_000;
 
@@ -207,6 +186,19 @@ function fingerprintScore(el: Element, fp: Fingerprint, cache: TextCache): numbe
 const RESOLVE_THRESHOLD = 0.75;
 const FUZZY_THRESHOLD = 0.6;
 
+/**
+ * A range anchor that found its block but not its text degrades to a block-level
+ * attachment at reduced confidence — never a highlight over the wrong words.
+ */
+const RANGE_MISS_PENALTY = 0.8;
+
+function withRange(resolution: AnchorResolution, anchor: Anchor): AnchorResolution {
+  if (resolution.status !== "resolved" || anchor.kind !== "range") return resolution;
+  const range = resolveRangeInBlock(resolution.element, anchor);
+  if (range) return { ...resolution, range };
+  return { ...resolution, confidence: resolution.confidence * RANGE_MISS_PENALTY };
+}
+
 export function resolveAnchor(anchor: Anchor, doc: Document): AnchorResolution {
   const cache: TextCache = new WeakMap();
 
@@ -216,7 +208,7 @@ export function resolveAnchor(anchor: Anchor, doc: Document): AnchorResolution {
       const el = doc.querySelector(anchor.selector);
       if (el) {
         const confidence = verifyAgainstQuote(el, anchor, cache);
-        if (confidence >= RESOLVE_THRESHOLD) return { status: "resolved", element: el, confidence };
+        if (confidence >= RESOLVE_THRESHOLD) return withRange({ status: "resolved", element: el, confidence }, anchor);
       }
     } catch {
       // invalid selector (host DOM changed our assumptions) — fall through
@@ -230,7 +222,7 @@ export function resolveAnchor(anchor: Anchor, doc: Document): AnchorResolution {
       const el = result.singleNodeValue as Element | null;
       if (el && el.nodeType === 1) {
         const confidence = verifyAgainstQuote(el, anchor, cache);
-        if (confidence >= RESOLVE_THRESHOLD) return { status: "resolved", element: el, confidence };
+        if (confidence >= RESOLVE_THRESHOLD) return withRange({ status: "resolved", element: el, confidence }, anchor);
       }
     } catch {
       // jsdom or hosts without XPath support — fall through
@@ -250,7 +242,7 @@ export function resolveAnchor(anchor: Anchor, doc: Document): AnchorResolution {
           if (!best || best.contains(el)) best = el;
         }
       }
-      if (best) return { status: "resolved", element: best, confidence: 1 };
+      if (best) return withRange({ status: "resolved", element: best, confidence: 1 }, anchor);
     }
   }
 
@@ -267,7 +259,7 @@ export function resolveAnchor(anchor: Anchor, doc: Document): AnchorResolution {
       }
     }
     if (best && bestScore >= FUZZY_THRESHOLD) {
-      return { status: "resolved", element: best, confidence: bestScore };
+      return withRange({ status: "resolved", element: best, confidence: bestScore }, anchor);
     }
   }
 

@@ -1,4 +1,5 @@
 import { createAnchor, resolveAnchor } from "./anchors";
+import { createRangeAnchor } from "./ranges";
 import { buildExcludeFn, createDefaultBlockResolver, isAnnotatorUI } from "./blocks";
 import { createCommandRegistry } from "./commands";
 import { Emitter, generateId } from "./events";
@@ -249,12 +250,27 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
     }
   }
 
-  async function composeAt(target: Element): Promise<void> {
-    const anchor = createAnchor(target, page.url);
+  async function composeAt(target: Element, range?: Range): Promise<void> {
+    const blockAnchor = createAnchor(target, page.url);
+    const anchor = range ? createRangeAnchor(range, target, blockAnchor) : blockAnchor;
     const result = await ui.openComposer(target, "", false);
     if (result.action === "save" && result.text.trim()) {
       await createNote(anchor, result.text.trim());
     }
+  }
+
+  /** A live, non-collapsed selection inside an annotatable block, if any. */
+  function selectionRange(): { range: Range; block: Element } | null {
+    const selection = win.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    if (!range.toString().trim()) return null;
+    const container = range.commonAncestorContainer;
+    const el = container instanceof Element ? container : container.parentElement;
+    if (!el || isAnnotatorUI(el)) return null;
+    const block = blockResolver(el, { exclude });
+    if (!block || !block.contains(range.commonAncestorContainer)) return null;
+    return { range, block };
   }
 
   // -- modes --------------------------------------------------------------
@@ -321,6 +337,20 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
     if (!picking() || ui.hasComposerOpen()) return;
     const target = e.target as Element | null;
     if (!target || !(target instanceof Element) || isAnnotatorUI(target)) return;
+
+    // A click that ends a text drag still has the selection live: annotate the
+    // selected words rather than the whole block. Re-anchoring stays block-level.
+    if (!reanchoringId) {
+      const picked = selectionRange();
+      if (picked) {
+        e.preventDefault();
+        e.stopPropagation();
+        ui.setHoverTarget(null);
+        void composeAt(picked.block, picked.range);
+        return;
+      }
+    }
+
     const block = hoverEl ?? blockResolver(target, { exclude });
     if (!block) return;
     e.preventDefault();

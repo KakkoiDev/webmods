@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createAnnotator, parseNoteFragment } from "../src/annotator";
 import { createAnchor } from "../src/anchors";
+import { createRangeAnchor } from "../src/ranges";
 import { createMemoryStorage } from "../src/storage";
 import type { Annotator } from "../src/types";
 
@@ -86,6 +87,33 @@ describe("createAnnotator", () => {
 
     annotator.commands.execute("annotate.enter");
     expect(annotator.getMode()).toBe("annotate");
+  });
+
+  it("stores and restores range notes through storage", async () => {
+    document.body.innerHTML = `<p id="t">Tokens are validated at the edge before requests reach the servers.</p>`;
+    const storage = createMemoryStorage();
+    annotator = createAnnotator({ storage });
+
+    const block = document.getElementById("t")!;
+    const textNode = block.firstChild as Text;
+    const at = block.textContent!.indexOf("validated at the edge");
+    const range = document.createRange();
+    range.setStart(textNode, at);
+    range.setEnd(textNode, at + "validated at the edge".length);
+
+    const anchor = createRangeAnchor(range, block, createAnchor(block, "http://localhost/"));
+    const note = await annotator.createNote(anchor, "range note");
+
+    const stored = await annotator.getNote(note.id);
+    expect(stored!.anchor.kind).toBe("range");
+    expect(stored!.anchor.textQuote?.exact).toBe("validated at the edge");
+
+    await annotator.refresh();
+    const resolution = annotator.getNotes()[0].resolution;
+    expect(resolution.status).toBe("resolved");
+    if (resolution.status === "resolved") {
+      expect(resolution.range?.toString()).toBe("validated at the edge");
+    }
   });
 
   it("re-anchors a detached note onto a new element", async () => {
