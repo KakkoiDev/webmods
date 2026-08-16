@@ -89,6 +89,19 @@ describe("createAnchor / resolveAnchor", () => {
     expect(res.status).toBe("detached");
   });
 
+  it("finds the right block among many similar siblings", () => {
+    const paras = Array.from({ length: 100 }, (_, i) => `<p>Paragraph number ${i} with filler wording.</p>`).join("");
+    setBody(`<main>${paras}</main>`);
+    const target = document.querySelectorAll("p")[73];
+    const anchor = createAnchor(target, "https://example.com/doc");
+
+    // Re-render the same content so selectors/ids can't shortcut the search.
+    setBody(`<section>${paras}</section>`);
+    const res = resolveAnchor(anchor, document);
+    expect(res.status).toBe("resolved");
+    if (res.status === "resolved") expect(res.element.textContent).toContain("Paragraph number 73 ");
+  });
+
   it("does not resolve a stale selector pointing at different content", () => {
     const el = document.getElementById("intro")!;
     const anchor = createAnchor(el, "https://example.com/doc");

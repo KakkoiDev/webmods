@@ -126,20 +126,35 @@ function textSimilarity(a, b) {
   }
   return 2 * matches / (a.length + b.length - 2);
 }
+var MAX_CANDIDATES = 2e4;
 function candidateElements(doc, tag) {
   const selector = tag || "article,section,p,li,blockquote,pre,figure,table,h1,h2,h3,h4,h5,h6,dd,dt,td,th,div";
-  return Array.from(doc.querySelectorAll(selector)).filter((el) => (el.textContent || "").trim().length > 0);
+  const all = doc.querySelectorAll(selector);
+  const out = [];
+  for (const el of all) {
+    if ((el.textContent || "").trim().length === 0) continue;
+    out.push(el);
+    if (out.length >= MAX_CANDIDATES) break;
+  }
+  return out;
 }
-function verifyAgainstQuote(el, anchor) {
+function cachedQuoteText(el, cache) {
+  let text = cache.get(el);
+  if (text === void 0) {
+    text = blockText(el).slice(0, QUOTE_MAX);
+    cache.set(el, text);
+  }
+  return text;
+}
+function verifyAgainstQuote(el, anchor, cache) {
   if (!anchor.textQuote?.exact) return 0.5;
-  const text = blockText(el).slice(0, QUOTE_MAX);
-  return textSimilarity(text, anchor.textQuote.exact);
+  return textSimilarity(cachedQuoteText(el, cache), anchor.textQuote.exact);
 }
-function fingerprintScore(el, fp) {
+function fingerprintScore(el, fp, cache) {
   let score = 0;
   let weight = 0;
   if (fp.text) {
-    score += textSimilarity(blockText(el).slice(0, QUOTE_MAX), fp.text) * 3;
+    score += textSimilarity(cachedQuoteText(el, cache), fp.text) * 3;
     weight += 3;
   }
   if (fp.tag) {
@@ -163,11 +178,12 @@ function fingerprintScore(el, fp) {
 var RESOLVE_THRESHOLD = 0.75;
 var FUZZY_THRESHOLD = 0.6;
 function resolveAnchor(anchor, doc) {
+  const cache = /* @__PURE__ */ new WeakMap();
   if (anchor.selector) {
     try {
       const el = doc.querySelector(anchor.selector);
       if (el) {
-        const confidence = verifyAgainstQuote(el, anchor);
+        const confidence = verifyAgainstQuote(el, anchor, cache);
         if (confidence >= RESOLVE_THRESHOLD) return { status: "resolved", element: el, confidence };
       }
     } catch {
@@ -178,7 +194,7 @@ function resolveAnchor(anchor, doc) {
       const result = doc.evaluate(anchor.xpath, doc, null, 9, null);
       const el = result.singleNodeValue;
       if (el && el.nodeType === 1) {
-        const confidence = verifyAgainstQuote(el, anchor);
+        const confidence = verifyAgainstQuote(el, anchor, cache);
         if (confidence >= RESOLVE_THRESHOLD) return { status: "resolved", element: el, confidence };
       }
     } catch {
@@ -190,7 +206,7 @@ function resolveAnchor(anchor, doc) {
       const candidates = candidateElements(doc, scoped);
       let best = null;
       for (const el of candidates) {
-        if (blockText(el).slice(0, QUOTE_MAX) === anchor.textQuote.exact) {
+        if (cachedQuoteText(el, cache) === anchor.textQuote.exact) {
           if (!best || best.contains(el)) best = el;
         }
       }
@@ -202,7 +218,7 @@ function resolveAnchor(anchor, doc) {
     let best = null;
     let bestScore = 0;
     for (const el of candidates) {
-      const score = fingerprintScore(el, anchor.fingerprint);
+      const score = fingerprintScore(el, anchor.fingerprint, cache);
       if (score > bestScore) {
         best = el;
         bestScore = score;
@@ -527,6 +543,15 @@ var DocumentStorage = class {
   async listAll() {
     return dbAll(await this.read());
   }
+  async getSetting(key) {
+    const db = await this.read();
+    return db.settings?.[key];
+  }
+  async setSetting(key, value) {
+    const db = await this.read();
+    db.settings = { ...db.settings, [key]: value };
+    await this.write(db);
+  }
   /** Full document access for export/import. */
   async exportDB() {
     return await this.read();
@@ -662,6 +687,18 @@ function createIndexedDBStorage(name = IDB_NAME) {
     async listAll() {
       const store = (await db()).transaction("annotations").objectStore("annotations");
       return idbRequest(store.getAll());
+    },
+    async getSetting(key) {
+      const store = (await db()).transaction("meta").objectStore("meta");
+      return await idbRequest(store.get(`setting:${key}`));
+    },
+    async setSetting(key, value) {
+      const tx = (await db()).transaction("meta", "readwrite");
+      tx.objectStore("meta").put(value, `setting:${key}`);
+      await new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
     }
   };
 }
@@ -867,17 +904,20 @@ button.wm-btn.wm-danger { color: #d1242f; }
 .wm-badge-detached { background: #fff1f0; color: #d1242f; border: 1px solid #ffd7d5; }
 .wm-badge-attach { background: #eef1f4; color: #57606a; border: 1px solid #d0d7de; }
 .wm-empty { color: #57606a; font-size: 13px; padding: 12px 4px; }
+.wm-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .wm-mode-pill {
   position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
   pointer-events: none; background: #1f2328; color: #fff; font-size: 12px; font-weight: 600;
   padding: 5px 14px; border-radius: 999px; opacity: 0.92; display: none;
 }
 `;
+var MODE_TEXT_DEFAULT = "Annotate mode \u2014 click a block to add a note (Esc to exit)";
 var AnnotatorUI = class {
   constructor(doc, options, noteCallbacks) {
     this.doc = doc;
     this.options = options;
     this.composerEl = null;
+    this.composerReturnFocus = null;
     this.markers = /* @__PURE__ */ new Map();
     this.hoverTarget = null;
     this.tabs = [{ id: "notes", label: "Notes", render: () => {
@@ -904,8 +944,13 @@ var AnnotatorUI = class {
     this.layer.appendChild(this.hoverBox);
     this.modePill = doc.createElement("div");
     this.modePill.className = "wm-mode-pill";
-    this.modePill.textContent = "Annotate mode \u2014 click a block to add a note (Esc to exit)";
+    this.modePill.textContent = MODE_TEXT_DEFAULT;
     this.layer.appendChild(this.modePill);
+    this.liveRegion = doc.createElement("div");
+    this.liveRegion.className = "wm-sr-only";
+    this.liveRegion.setAttribute("aria-live", "polite");
+    this.liveRegion.setAttribute("role", "status");
+    this.layer.appendChild(this.liveRegion);
     this.sidebar = doc.createElement("aside");
     this.sidebar.className = `wm-sidebar wm-${options.position}`;
     this.sidebar.setAttribute("role", "complementary");
@@ -944,9 +989,15 @@ var AnnotatorUI = class {
     this.positionBox(this.hoverBox, el);
     this.hoverBox.style.display = "block";
   }
-  setModeIndicator(on) {
+  setModeIndicator(on, text) {
+    this.modePill.textContent = text ?? MODE_TEXT_DEFAULT;
     this.modePill.style.display = on ? "block" : "none";
+    this.announce(on ? text ?? "Annotation mode on" : "Annotation mode off");
     if (!on) this.setHoverTarget(null);
+  }
+  /** Announce a transient message to assistive tech. */
+  announce(message) {
+    this.liveRegion.textContent = message;
   }
   positionBox(box, target) {
     const rect = target.getBoundingClientRect();
@@ -1049,6 +1100,14 @@ var AnnotatorUI = class {
         } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
           finish("save");
+        } else if (e.key === "Tab") {
+          const focusables = [...composer.querySelectorAll("textarea, button")];
+          if (!focusables.length) return;
+          const active = this.root.activeElement;
+          const index = active ? focusables.indexOf(active) : -1;
+          const next = e.shiftKey ? focusables[(index <= 0 ? focusables.length : index) - 1] : focusables[(index + 1) % focusables.length];
+          e.preventDefault();
+          next?.focus();
         }
       });
       const rect = target.getBoundingClientRect();
@@ -1061,12 +1120,16 @@ var AnnotatorUI = class {
       composer.style.left = `${left}px`;
       this.layer.appendChild(composer);
       this.composerEl = composer;
+      this.composerReturnFocus = this.doc.activeElement;
       textarea.focus();
     });
   }
   closeComposer() {
     this.composerEl?.remove();
     this.composerEl = null;
+    const back = this.composerReturnFocus;
+    this.composerReturnFocus = null;
+    if (back && back.isConnected) back.focus?.();
   }
   hasComposerOpen() {
     return !!this.composerEl;
@@ -1125,16 +1188,26 @@ var AnnotatorUI = class {
   }
   renderTabs() {
     this.tabBar.textContent = "";
-    for (const tab of this.tabs) {
+    this.tabs.forEach((tab, index) => {
       const btn = this.doc.createElement("button");
       btn.className = "wm-tab";
       btn.type = "button";
       btn.setAttribute("role", "tab");
+      btn.dataset.tabId = tab.id;
       btn.setAttribute("aria-selected", String(tab.id === this.activeTab));
+      btn.tabIndex = tab.id === this.activeTab ? 0 : -1;
       btn.textContent = tab.label;
       btn.addEventListener("click", () => this.activateTab(tab.id));
+      btn.addEventListener("keydown", (e) => {
+        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "Home" && e.key !== "End") return;
+        e.preventDefault();
+        const last = this.tabs.length - 1;
+        const next = e.key === "Home" ? 0 : e.key === "End" ? last : e.key === "ArrowRight" ? (index + 1) % this.tabs.length : (index - 1 + this.tabs.length) % this.tabs.length;
+        this.activateTab(this.tabs[next].id);
+        this.tabBar.querySelector(`.wm-tab[data-tab-id="${this.tabs[next].id}"]`)?.focus();
+      });
       this.tabBar.appendChild(btn);
-    }
+    });
     const spacer = this.doc.createElement("span");
     spacer.className = "wm-spacer";
     this.tabBar.appendChild(spacer);
@@ -1142,13 +1215,15 @@ var AnnotatorUI = class {
     close.setAttribute("aria-label", "Close sidebar");
     this.tabBar.appendChild(close);
   }
+  /** Switch the sidebar to a tab by id (falls back to Notes for unknown ids). */
   activateTab(id) {
     this.activeTab = this.tabs.some((t) => t.id === id) ? id : "notes";
     this.tabCleanup?.();
     this.tabCleanup = null;
     for (const btn of this.tabBar.querySelectorAll(".wm-tab[role=tab]")) {
-      const tab = this.tabs[[...this.tabBar.querySelectorAll(".wm-tab[role=tab]")].indexOf(btn)];
-      btn.setAttribute("aria-selected", String(tab?.id === this.activeTab));
+      const selected = btn.dataset.tabId === this.activeTab;
+      btn.setAttribute("aria-selected", String(selected));
+      btn.tabIndex = selected ? 0 : -1;
     }
     this.sidebarBody.textContent = "";
     if (this.activeTab === "notes") {
@@ -1216,6 +1291,8 @@ var AnnotatorUI = class {
       const id = note.annotation.id;
       if (!detached) {
         actions.appendChild(this.makeButton("Edit", "wm-btn", () => this.noteCallbacks.onEdit(id)));
+      } else {
+        actions.appendChild(this.makeButton("Re-attach", "wm-btn", () => this.noteCallbacks.onReattach(id)));
       }
       actions.appendChild(this.makeButton("Copy link", "wm-btn", () => this.noteCallbacks.onCopyLink(id)));
       for (const action of this.noteActions) {
@@ -1244,6 +1321,7 @@ var AnnotatorUI = class {
 
 // src/annotator.ts
 var DEFAULT_SHORTCUT = "alt+shift+a";
+var DEFAULT_SIDEBAR_SHORTCUT = "alt+shift+s";
 function matchesShortcut(e, shortcut) {
   const parts = shortcut.toLowerCase().split("+");
   const key = parts[parts.length - 1];
@@ -1295,13 +1373,15 @@ function createAnnotator(options = {}) {
     onNavigate: (id) => void scrollToNote(id),
     onEdit: (id) => void editNote(id),
     onDelete: (id) => void deleteNote(id),
-    onCopyLink: (id) => void copyNoteLink(id)
+    onCopyLink: (id) => void copyNoteLink(id),
+    onReattach: (id) => startReanchor(id)
   });
   async function refresh() {
     try {
       const nextPage = resolvePageIdentity(win.location, doc);
       if (nextPage.id !== page.id) {
         page = nextPage;
+        observerRetries = 0;
         emitter.emit("page:change", { page });
       }
       const annotations = await storage.getPage(page);
@@ -1313,9 +1393,41 @@ function createAnnotator(options = {}) {
         return { annotation, resolution };
       });
       ui.renderNotes(resolved);
+      ensureObserver();
     } catch (err) {
       fail(err, "refresh");
     }
+  }
+  const OBSERVER_MAX_RETRIES = 5;
+  const OBSERVER_DEBOUNCE_MS = 400;
+  let observer = null;
+  let observerTimer = null;
+  let observerRetries = 0;
+  function stopObserver() {
+    observer?.disconnect();
+    observer = null;
+    if (observerTimer) {
+      clearTimeout(observerTimer);
+      observerTimer = null;
+    }
+  }
+  function ensureObserver() {
+    const hasDetached = resolved.some((n) => n.resolution.status === "detached");
+    if (destroyed || !hasDetached || observerRetries >= OBSERVER_MAX_RETRIES) {
+      stopObserver();
+      return;
+    }
+    if (observer) return;
+    observer = new MutationObserver((mutations) => {
+      if (mutations.every((m) => m.target instanceof Element && isAnnotatorUI(m.target))) return;
+      if (observerTimer) clearTimeout(observerTimer);
+      observerTimer = setTimeout(() => {
+        observerTimer = null;
+        observerRetries++;
+        void refresh();
+      }, OBSERVER_DEBOUNCE_MS);
+    });
+    observer.observe(doc.body, { childList: true, subtree: true });
   }
   async function createNote(anchor, body) {
     const now = Date.now();
@@ -1337,6 +1449,16 @@ function createAnnotator(options = {}) {
     const existing = await storage.get(id);
     if (!existing) throw new Error(`Annotation not found: ${id}`);
     const annotation = { ...existing, ...patch, id, updatedAt: Date.now() };
+    await storage.save(annotation);
+    emitter.emit("note:update", { annotation });
+    emitter.emit("note:save", { annotation });
+    await refresh();
+    return annotation;
+  }
+  async function reanchorNote(id, element) {
+    const existing = await storage.get(id);
+    if (!existing) throw new Error(`Annotation not found: ${id}`);
+    const annotation = { ...existing, anchor: createAnchor(element, page.url), updatedAt: Date.now() };
     await storage.save(annotation);
     emitter.emit("note:update", { annotation });
     emitter.emit("note:save", { annotation });
@@ -1406,20 +1528,45 @@ function createAnnotator(options = {}) {
     }
     emitter.emit("mode:change", { mode: next });
   }
+  let reanchoringId = null;
+  function startReanchor(id) {
+    if (destroyed) return;
+    reanchoringId = id;
+    ui.setModeIndicator(true, "Pick a new block for this note (Esc to cancel)");
+  }
+  function cancelReanchor() {
+    if (!reanchoringId) return;
+    reanchoringId = null;
+    hoverEl = null;
+    ui.setHoverTarget(null);
+    ui.setModeIndicator(mode === "annotate");
+  }
+  const picking = () => mode === "annotate" || reanchoringId !== null;
   let hoverEl = null;
+  let pendingHoverTarget = null;
+  let hoverFrame = 0;
   function onPointerMove(e) {
-    if (mode !== "annotate" || ui.hasComposerOpen()) return;
+    if (!picking() || ui.hasComposerOpen()) return;
+    if (e.buttons & 1) return;
     const target = e.target;
     if (!target || !(target instanceof Element)) return;
-    const block = isAnnotatorUI(target) ? null : blockResolver(target, { exclude });
-    if (block !== hoverEl) {
-      hoverEl = block;
-      ui.setHoverTarget(block);
-      emitter.emit("block:hover", { element: block });
-    }
+    pendingHoverTarget = target;
+    if (hoverFrame) return;
+    hoverFrame = requestAnimationFrame(() => {
+      hoverFrame = 0;
+      const candidate = pendingHoverTarget;
+      pendingHoverTarget = null;
+      if (!candidate || !picking() || ui.hasComposerOpen()) return;
+      const block = isAnnotatorUI(candidate) ? null : blockResolver(candidate, { exclude });
+      if (block !== hoverEl) {
+        hoverEl = block;
+        ui.setHoverTarget(block);
+        emitter.emit("block:hover", { element: block });
+      }
+    });
   }
   function onClick(e) {
-    if (mode !== "annotate" || ui.hasComposerOpen()) return;
+    if (!picking() || ui.hasComposerOpen()) return;
     const target = e.target;
     if (!target || !(target instanceof Element) || isAnnotatorUI(target)) return;
     const block = hoverEl ?? blockResolver(target, { exclude });
@@ -1427,25 +1574,49 @@ function createAnnotator(options = {}) {
     e.preventDefault();
     e.stopPropagation();
     ui.setHoverTarget(null);
+    if (reanchoringId) {
+      const id = reanchoringId;
+      cancelReanchor();
+      void reanchorNote(id, block).then(() => ui.focusNote(id)).catch((err) => fail(err, "reanchor"));
+      return;
+    }
     void composeAt(block);
   }
   function onKeydown(e) {
-    if (e.key === "Escape" && mode === "annotate" && !ui.hasComposerOpen()) {
-      setMode("explore");
-      return;
+    if (e.key === "Escape" && !ui.hasComposerOpen()) {
+      if (reanchoringId) {
+        cancelReanchor();
+        return;
+      }
+      if (mode === "annotate") {
+        setMode("explore");
+        return;
+      }
+      if (ui.isSidebarOpen()) {
+        ui.closeSidebar();
+        return;
+      }
     }
-    const shortcut = options.shortcuts?.toggle === void 0 ? DEFAULT_SHORTCUT : options.shortcuts.toggle;
-    if (shortcut && matchesShortcut(e, shortcut)) {
-      const target = e.target;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+    const target = e.target;
+    const typing = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+    if (typing) return;
+    const toggleShortcut = options.shortcuts?.toggle === void 0 ? DEFAULT_SHORTCUT : options.shortcuts.toggle;
+    if (toggleShortcut && matchesShortcut(e, toggleShortcut)) {
       e.preventDefault();
       setMode(mode === "annotate" ? "explore" : "annotate");
+      return;
+    }
+    const sidebarShortcut = options.shortcuts?.sidebar === void 0 ? DEFAULT_SIDEBAR_SHORTCUT : options.shortcuts.sidebar;
+    if (sidebarShortcut && matchesShortcut(e, sidebarShortcut)) {
+      e.preventDefault();
+      commands.execute("sidebar.toggle");
     }
   }
   doc.addEventListener("pointermove", onPointerMove, { capture: true, passive: true });
   doc.addEventListener("click", onClick, true);
   doc.addEventListener("keydown", onKeydown, true);
   cleanups.push(() => {
+    if (hoverFrame) cancelAnimationFrame(hoverFrame);
     doc.removeEventListener("pointermove", onPointerMove, { capture: true });
     doc.removeEventListener("click", onClick, true);
     doc.removeEventListener("keydown", onKeydown, true);
@@ -1494,6 +1665,10 @@ function createAnnotator(options = {}) {
       on: (event, handler) => emitter.on(event, handler),
       addSidebarTab: (tab) => ui.addTab(tab),
       addNoteAction: (action) => ui.addNoteAction(action),
+      activateSidebarTab: (id) => {
+        ui.openSidebar();
+        ui.activateTab(id);
+      },
       getPage: () => page,
       getNotes: () => resolved.slice(),
       scrollToNote
@@ -1507,6 +1682,7 @@ function createAnnotator(options = {}) {
   commands.register("note.scroll-to", (id) => scrollToNote(String(id)));
   commands.register("note.copy-link", (id) => copyNoteLink(String(id)));
   commands.register("note.edit", (id) => editNote(String(id)));
+  commands.register("note.reattach", (id) => startReanchor(String(id)));
   const api = {
     enter: () => setMode("annotate"),
     exit: () => setMode("explore"),
@@ -1517,6 +1693,7 @@ function createAnnotator(options = {}) {
     getNotes: () => resolved.slice(),
     createNote,
     updateNote,
+    reanchorNote,
     deleteNote,
     getNote: (id) => storage.get(id),
     getPageNotes: (p) => storage.getPage(p ?? page),
@@ -1540,6 +1717,7 @@ function createAnnotator(options = {}) {
       for (const plugin of plugins) {
         Promise.resolve(plugin.destroy?.()).catch((err) => fail(err, `plugin-destroy:${plugin.name}`));
       }
+      stopObserver();
       for (const off of cleanups) off();
       ui.destroy();
       emitter.clear();

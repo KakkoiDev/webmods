@@ -99,6 +99,17 @@ export class DocumentStorage implements AnnotationStorage {
     return dbAll(await this.read());
   }
 
+  async getSetting<T = unknown>(key: string): Promise<T | undefined> {
+    const db = await this.read();
+    return db.settings?.[key] as T | undefined;
+  }
+
+  async setSetting(key: string, value: unknown): Promise<void> {
+    const db = await this.read();
+    db.settings = { ...db.settings, [key]: value };
+    await this.write(db);
+  }
+
   /** Full document access for export/import. */
   async exportDB(): Promise<AnnotationDB> {
     return await this.read();
@@ -266,6 +277,18 @@ export function createIndexedDBStorage(name = IDB_NAME): AnnotationStorage {
     async listAll() {
       const store = (await db()).transaction("annotations").objectStore("annotations");
       return idbRequest(store.getAll());
+    },
+    async getSetting<T = unknown>(key: string): Promise<T | undefined> {
+      const store = (await db()).transaction("meta").objectStore("meta");
+      return (await idbRequest(store.get(`setting:${key}`))) as T | undefined;
+    },
+    async setSetting(key, value) {
+      const tx = (await db()).transaction("meta", "readwrite");
+      tx.objectStore("meta").put(value, `setting:${key}`);
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
     },
   };
 }

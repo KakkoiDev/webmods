@@ -74,6 +74,9 @@ export interface AnnotationStorage {
   delete(id: string): Promise<void>;
   listPages?(): Promise<PageSummary[]>;
   listAll?(): Promise<Annotation[]>;
+  /** Host/plugin settings (API keys, preferences). Never included in exports. */
+  getSetting?<T = unknown>(key: string): Promise<T | undefined>;
+  setSetting?(key: string, value: unknown): Promise<void>;
 }
 
 export type BlockResolver = (target: Element, ctx: { exclude: (el: Element) => boolean }) => Element | null;
@@ -115,6 +118,8 @@ export interface AnnotatorOptions {
   shortcuts?: {
     /** e.g. "alt+shift+a"; null disables the built-in shortcut */
     toggle?: string | null;
+    /** Toggles the notes sidebar; defaults to "alt+shift+s", null disables. */
+    sidebar?: string | null;
   };
 
   exclude?: ExcludeOption;
@@ -165,6 +170,8 @@ export interface PluginContext {
   on<E extends EventName>(event: E, handler: EventHandler<E>): () => void;
   addSidebarTab(tab: SidebarTab): () => void;
   addNoteAction(action: NoteAction): () => void;
+  /** Open the sidebar on a specific tab (e.g. one this plugin registered). */
+  activateSidebarTab(id: string): void;
   getPage(): PageIdentity;
   getNotes(): ResolvedNote[];
   scrollToNote(id: string): Promise<boolean>;
@@ -189,6 +196,8 @@ export interface Annotator {
 
   createNote(anchor: Anchor, body: string): Promise<Annotation>;
   updateNote(id: string, patch: Partial<Pick<Annotation, "body" | "attachments" | "metadata">>): Promise<Annotation>;
+  /** Point an existing note at a new element, rebuilding its anchor. */
+  reanchorNote(id: string, element: Element): Promise<Annotation>;
   deleteNote(id: string): Promise<void>;
   getNote(id: string): Promise<Annotation | null>;
   getPageNotes(page?: PageIdentity): Promise<Annotation[]>;

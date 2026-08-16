@@ -145,23 +145,44 @@ export function textSimilarity(a: string, b: string): number {
   return (2 * matches) / (a.length + b.length - 2);
 }
 
+/** Fuzzy matching over more candidates than this is pointless and janky. */
+const MAX_CANDIDATES = 20_000;
+
 function candidateElements(doc: Document, tag?: string): Element[] {
   const selector = tag || "article,section,p,li,blockquote,pre,figure,table,h1,h2,h3,h4,h5,h6,dd,dt,td,th,div";
-  return Array.from(doc.querySelectorAll(selector)).filter((el) => (el.textContent || "").trim().length > 0);
+  const all = doc.querySelectorAll(selector);
+  const out: Element[] = [];
+  for (const el of all) {
+    if ((el.textContent || "").trim().length === 0) continue;
+    out.push(el);
+    if (out.length >= MAX_CANDIDATES) break;
+  }
+  return out;
 }
 
-function verifyAgainstQuote(el: Element, anchor: Anchor): number {
+/** Per-resolution memo: the same elements get scored by several strategies. */
+type TextCache = WeakMap<Element, string>;
+
+function cachedQuoteText(el: Element, cache: TextCache): string {
+  let text = cache.get(el);
+  if (text === undefined) {
+    text = blockText(el).slice(0, QUOTE_MAX);
+    cache.set(el, text);
+  }
+  return text;
+}
+
+function verifyAgainstQuote(el: Element, anchor: Anchor, cache: TextCache): number {
   if (!anchor.textQuote?.exact) return 0.5; // nothing to verify against; middling confidence
-  const text = blockText(el).slice(0, QUOTE_MAX);
-  return textSimilarity(text, anchor.textQuote.exact);
+  return textSimilarity(cachedQuoteText(el, cache), anchor.textQuote.exact);
 }
 
-function fingerprintScore(el: Element, fp: Fingerprint): number {
+function fingerprintScore(el: Element, fp: Fingerprint, cache: TextCache): number {
   let score = 0;
   let weight = 0;
 
   if (fp.text) {
-    score += textSimilarity(blockText(el).slice(0, QUOTE_MAX), fp.text) * 3;
+    score += textSimilarity(cachedQuoteText(el, cache), fp.text) * 3;
     weight += 3;
   }
   if (fp.tag) {
@@ -187,12 +208,14 @@ const RESOLVE_THRESHOLD = 0.75;
 const FUZZY_THRESHOLD = 0.6;
 
 export function resolveAnchor(anchor: Anchor, doc: Document): AnchorResolution {
+  const cache: TextCache = new WeakMap();
+
   // 1. Exact selector, verified against the stored quote so we never trust a stale path.
   if (anchor.selector) {
     try {
       const el = doc.querySelector(anchor.selector);
       if (el) {
-        const confidence = verifyAgainstQuote(el, anchor);
+        const confidence = verifyAgainstQuote(el, anchor, cache);
         if (confidence >= RESOLVE_THRESHOLD) return { status: "resolved", element: el, confidence };
       }
     } catch {
@@ -206,7 +229,7 @@ export function resolveAnchor(anchor: Anchor, doc: Document): AnchorResolution {
       const result = doc.evaluate(anchor.xpath, doc, null, 9 /* FIRST_ORDERED_NODE_TYPE */, null);
       const el = result.singleNodeValue as Element | null;
       if (el && el.nodeType === 1) {
-        const confidence = verifyAgainstQuote(el, anchor);
+        const confidence = verifyAgainstQuote(el, anchor, cache);
         if (confidence >= RESOLVE_THRESHOLD) return { status: "resolved", element: el, confidence };
       }
     } catch {
@@ -222,7 +245,7 @@ export function resolveAnchor(anchor: Anchor, doc: Document): AnchorResolution {
       const candidates = candidateElements(doc, scoped);
       let best: Element | null = null;
       for (const el of candidates) {
-        if (blockText(el).slice(0, QUOTE_MAX) === anchor.textQuote.exact) {
+        if (cachedQuoteText(el, cache) === anchor.textQuote.exact) {
           // Prefer the deepest exact match (a <p> over the <div> containing only it).
           if (!best || best.contains(el)) best = el;
         }
@@ -237,7 +260,7 @@ export function resolveAnchor(anchor: Anchor, doc: Document): AnchorResolution {
     let best: Element | null = null;
     let bestScore = 0;
     for (const el of candidates) {
-      const score = fingerprintScore(el, anchor.fingerprint);
+      const score = fingerprintScore(el, anchor.fingerprint, cache);
       if (score > bestScore) {
         best = el;
         bestScore = score;

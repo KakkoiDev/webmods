@@ -88,6 +88,39 @@ describe("createAnnotator", () => {
     expect(annotator.getMode()).toBe("annotate");
   });
 
+  it("re-anchors a detached note onto a new element", async () => {
+    document.body.innerHTML = `<p id="target">Original paragraph that will disappear entirely.</p>`;
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    const anchor = createAnchor(document.getElementById("target")!, "http://localhost/");
+    const note = await annotator.createNote(anchor, "keep me");
+    expect(annotator.getNotes()[0].resolution.status).toBe("resolved");
+
+    // The annotated content is gone; a different paragraph remains.
+    document.body.innerHTML = `<p id="other">A completely different paragraph about gardening.</p>`;
+    await annotator.refresh();
+    expect(annotator.getNotes()[0].resolution.status).toBe("detached");
+
+    const target = document.getElementById("other")!;
+    const updated = await annotator.reanchorNote(note.id, target);
+    expect(updated.updatedAt).toBeGreaterThanOrEqual(note.updatedAt);
+    expect(updated.body.text).toBe("keep me");
+
+    const resolution = annotator.getNotes()[0].resolution;
+    expect(resolution.status).toBe("resolved");
+    if (resolution.status === "resolved") expect(resolution.element).toBe(target);
+  });
+
+  it("re-anchoring rejects unknown ids", async () => {
+    document.body.innerHTML = `<p id="t">Some text.</p>`;
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    await expect(annotator.reanchorNote("nope", document.getElementById("t")!)).rejects.toThrow("not found");
+  });
+
+  it("registers the note.reattach command", () => {
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    expect(annotator.commands.has("note.reattach")).toBe(true);
+  });
+
   it("cleans up its UI and listeners on destroy", () => {
     annotator = createAnnotator({ storage: createMemoryStorage() });
     expect(document.querySelector("[data-wm-annotate-ui]")).toBeTruthy();

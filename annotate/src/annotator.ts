@@ -19,6 +19,7 @@ import { NOTE_FRAGMENT_PARAM } from "./types";
 import { AnnotatorUI } from "./ui";
 
 const DEFAULT_SHORTCUT = "alt+shift+a";
+const DEFAULT_SIDEBAR_SHORTCUT = "alt+shift+s";
 
 function matchesShortcut(e: KeyboardEvent, shortcut: string): boolean {
   const parts = shortcut.toLowerCase().split("+");
@@ -88,6 +89,7 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
     onEdit: (id) => void editNote(id),
     onDelete: (id) => void deleteNote(id),
     onCopyLink: (id) => void copyNoteLink(id),
+    onReattach: (id) => startReanchor(id),
   });
 
   // -- notes ------------------------------------------------------------
@@ -97,6 +99,7 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
       const nextPage = resolvePageIdentity(win.location, doc);
       if (nextPage.id !== page.id) {
         page = nextPage;
+        observerRetries = 0; // a new route deserves a fresh budget
         emitter.emit("page:change", { page });
       }
       const annotations = await storage.getPage(page);
@@ -108,9 +111,48 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
         return { annotation, resolution };
       });
       ui.renderNotes(resolved);
+      ensureObserver();
     } catch (err) {
       fail(err, "refresh");
     }
+  }
+
+  // Lazily-rendered pages mount their content after the first resolve pass. Watch
+  // for DOM changes ONLY while something is detached, and only a few times, so we
+  // never sit in a permanent full-page rescan loop (spec §23/§24).
+  const OBSERVER_MAX_RETRIES = 5;
+  const OBSERVER_DEBOUNCE_MS = 400;
+  let observer: MutationObserver | null = null;
+  let observerTimer: ReturnType<typeof setTimeout> | null = null;
+  let observerRetries = 0;
+
+  function stopObserver(): void {
+    observer?.disconnect();
+    observer = null;
+    if (observerTimer) {
+      clearTimeout(observerTimer);
+      observerTimer = null;
+    }
+  }
+
+  function ensureObserver(): void {
+    const hasDetached = resolved.some((n) => n.resolution.status === "detached");
+    if (destroyed || !hasDetached || observerRetries >= OBSERVER_MAX_RETRIES) {
+      stopObserver();
+      return;
+    }
+    if (observer) return;
+    observer = new MutationObserver((mutations) => {
+      // Our own overlay mutates constantly; ignore those.
+      if (mutations.every((m) => m.target instanceof Element && isAnnotatorUI(m.target))) return;
+      if (observerTimer) clearTimeout(observerTimer);
+      observerTimer = setTimeout(() => {
+        observerTimer = null;
+        observerRetries++;
+        void refresh();
+      }, OBSERVER_DEBOUNCE_MS);
+    });
+    observer.observe(doc.body, { childList: true, subtree: true });
   }
 
   async function createNote(anchor: Anchor, body: string): Promise<Annotation> {
@@ -137,6 +179,17 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
     const existing = await storage.get(id);
     if (!existing) throw new Error(`Annotation not found: ${id}`);
     const annotation: Annotation = { ...existing, ...patch, id, updatedAt: Date.now() };
+    await storage.save(annotation);
+    emitter.emit("note:update", { annotation });
+    emitter.emit("note:save", { annotation });
+    await refresh();
+    return annotation;
+  }
+
+  async function reanchorNote(id: string, element: Element): Promise<Annotation> {
+    const existing = await storage.get(id);
+    if (!existing) throw new Error(`Annotation not found: ${id}`);
+    const annotation: Annotation = { ...existing, anchor: createAnchor(element, page.url), updatedAt: Date.now() };
     await storage.save(annotation);
     emitter.emit("note:update", { annotation });
     emitter.emit("note:save", { annotation });
@@ -217,22 +270,55 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
     emitter.emit("mode:change", { mode: next });
   }
 
-  let hoverEl: Element | null = null;
+  /** Id of the note being re-anchored, or null. A session behaves like annotate mode. */
+  let reanchoringId: string | null = null;
 
+  function startReanchor(id: string): void {
+    if (destroyed) return;
+    reanchoringId = id;
+    ui.setModeIndicator(true, "Pick a new block for this note (Esc to cancel)");
+  }
+
+  function cancelReanchor(): void {
+    if (!reanchoringId) return;
+    reanchoringId = null;
+    hoverEl = null;
+    ui.setHoverTarget(null);
+    ui.setModeIndicator(mode === "annotate");
+  }
+
+  /** Pointer interactions are live in annotate mode and during a re-anchor session. */
+  const picking = () => mode === "annotate" || reanchoringId !== null;
+
+  let hoverEl: Element | null = null;
+  let pendingHoverTarget: Element | null = null;
+  let hoverFrame = 0;
+
+  /** Resolve at most one hover candidate per frame — pointermove fires far faster. */
   function onPointerMove(e: PointerEvent): void {
-    if (mode !== "annotate" || ui.hasComposerOpen()) return;
+    if (!picking() || ui.hasComposerOpen()) return;
+    // While a drag is in progress the user is selecting text, not picking a block.
+    if (e.buttons & 1) return;
     const target = e.target as Element | null;
     if (!target || !(target instanceof Element)) return;
-    const block = isAnnotatorUI(target) ? null : blockResolver(target, { exclude });
-    if (block !== hoverEl) {
-      hoverEl = block;
-      ui.setHoverTarget(block);
-      emitter.emit("block:hover", { element: block });
-    }
+    pendingHoverTarget = target;
+    if (hoverFrame) return;
+    hoverFrame = requestAnimationFrame(() => {
+      hoverFrame = 0;
+      const candidate = pendingHoverTarget;
+      pendingHoverTarget = null;
+      if (!candidate || !picking() || ui.hasComposerOpen()) return;
+      const block = isAnnotatorUI(candidate) ? null : blockResolver(candidate, { exclude });
+      if (block !== hoverEl) {
+        hoverEl = block;
+        ui.setHoverTarget(block);
+        emitter.emit("block:hover", { element: block });
+      }
+    });
   }
 
   function onClick(e: MouseEvent): void {
-    if (mode !== "annotate" || ui.hasComposerOpen()) return;
+    if (!picking() || ui.hasComposerOpen()) return;
     const target = e.target as Element | null;
     if (!target || !(target instanceof Element) || isAnnotatorUI(target)) return;
     const block = hoverEl ?? blockResolver(target, { exclude });
@@ -240,20 +326,53 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
     e.preventDefault();
     e.stopPropagation();
     ui.setHoverTarget(null);
+
+    if (reanchoringId) {
+      const id = reanchoringId;
+      cancelReanchor();
+      void reanchorNote(id, block)
+        .then(() => ui.focusNote(id))
+        .catch((err) => fail(err, "reanchor"));
+      return;
+    }
     void composeAt(block);
   }
 
   function onKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape" && mode === "annotate" && !ui.hasComposerOpen()) {
-      setMode("explore");
-      return;
+    // Escape priority: composer (handles its own) -> re-anchor session -> annotate mode.
+    if (e.key === "Escape" && !ui.hasComposerOpen()) {
+      if (reanchoringId) {
+        cancelReanchor();
+        return;
+      }
+      if (mode === "annotate") {
+        setMode("explore");
+        return;
+      }
+      if (ui.isSidebarOpen()) {
+        ui.closeSidebar();
+        return;
+      }
     }
-    const shortcut = options.shortcuts?.toggle === undefined ? DEFAULT_SHORTCUT : options.shortcuts.toggle;
-    if (shortcut && matchesShortcut(e, shortcut)) {
-      const target = e.target as Element | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || (target as HTMLElement).isContentEditable)) return;
+
+    // Typing in a field should never trigger a global shortcut.
+    const target = e.target as Element | null;
+    const typing =
+      !!target &&
+      (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || (target as HTMLElement).isContentEditable);
+    if (typing) return;
+
+    const toggleShortcut = options.shortcuts?.toggle === undefined ? DEFAULT_SHORTCUT : options.shortcuts.toggle;
+    if (toggleShortcut && matchesShortcut(e, toggleShortcut)) {
       e.preventDefault();
       setMode(mode === "annotate" ? "explore" : "annotate");
+      return;
+    }
+
+    const sidebarShortcut = options.shortcuts?.sidebar === undefined ? DEFAULT_SIDEBAR_SHORTCUT : options.shortcuts.sidebar;
+    if (sidebarShortcut && matchesShortcut(e, sidebarShortcut)) {
+      e.preventDefault();
+      commands.execute("sidebar.toggle");
     }
   }
 
@@ -261,6 +380,7 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
   doc.addEventListener("click", onClick, true);
   doc.addEventListener("keydown", onKeydown, true);
   cleanups.push(() => {
+    if (hoverFrame) cancelAnimationFrame(hoverFrame);
     doc.removeEventListener("pointermove", onPointerMove, { capture: true } as EventListenerOptions);
     doc.removeEventListener("click", onClick, true);
     doc.removeEventListener("keydown", onKeydown, true);
@@ -318,6 +438,10 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
       on: (event, handler) => emitter.on(event, handler),
       addSidebarTab: (tab) => ui.addTab(tab),
       addNoteAction: (action) => ui.addNoteAction(action),
+      activateSidebarTab: (id) => {
+        ui.openSidebar();
+        ui.activateTab(id);
+      },
       getPage: () => page,
       getNotes: () => resolved.slice(),
       scrollToNote,
@@ -334,6 +458,7 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
   commands.register("note.scroll-to", (id) => scrollToNote(String(id)));
   commands.register("note.copy-link", (id) => copyNoteLink(String(id)));
   commands.register("note.edit", (id) => editNote(String(id)));
+  commands.register("note.reattach", (id) => startReanchor(String(id)));
 
   // -- public API -------------------------------------------------------------
 
@@ -349,6 +474,7 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
 
     createNote,
     updateNote,
+    reanchorNote,
     deleteNote,
     getNote: (id) => storage.get(id),
     getPageNotes: (p) => storage.getPage(p ?? page),
@@ -377,6 +503,7 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
       for (const plugin of plugins) {
         Promise.resolve(plugin.destroy?.()).catch((err) => fail(err, `plugin-destroy:${plugin.name}`));
       }
+      stopObserver();
       for (const off of cleanups) off();
       ui.destroy();
       emitter.clear();

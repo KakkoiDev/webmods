@@ -26,6 +26,7 @@ function attach(storage = createMemoryStorage()) {
     on: () => () => {},
     addSidebarTab: () => () => {},
     addNoteAction: () => () => {},
+    activateSidebarTab: () => {},
     getPage: () => page,
     getNotes: () => [],
     scrollToNote: async () => false,

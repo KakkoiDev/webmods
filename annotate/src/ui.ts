@@ -104,6 +104,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
 .wm-badge-detached { background: #fff1f0; color: #d1242f; border: 1px solid #ffd7d5; }
 .wm-badge-attach { background: #eef1f4; color: #57606a; border: 1px solid #d0d7de; }
 .wm-empty { color: #57606a; font-size: 13px; padding: 12px 4px; }
+.wm-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .wm-mode-pill {
   position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
   pointer-events: none; background: #1f2328; color: #fff; font-size: 12px; font-weight: 600;
@@ -127,7 +128,10 @@ interface NoteCallbacks {
   onEdit(id: string): void;
   onDelete(id: string): void;
   onCopyLink(id: string): void;
+  onReattach(id: string): void;
 }
+
+const MODE_TEXT_DEFAULT = "Annotate mode — click a block to add a note (Esc to exit)";
 
 export class AnnotatorUI {
   private host: HTMLElement;
@@ -138,7 +142,9 @@ export class AnnotatorUI {
   private sidebarBody: HTMLElement;
   private tabBar: HTMLElement;
   private modePill: HTMLElement;
+  private liveRegion: HTMLElement;
   private composerEl: HTMLElement | null = null;
+  private composerReturnFocus: HTMLElement | null = null;
   private markers = new Map<string, { el: HTMLElement; target: Element }>();
   private hoverTarget: Element | null = null;
   private tabs: SidebarTab[] = [{ id: "notes", label: "Notes", render: () => {} }];
@@ -171,8 +177,15 @@ export class AnnotatorUI {
 
     this.modePill = doc.createElement("div");
     this.modePill.className = "wm-mode-pill";
-    this.modePill.textContent = "Annotate mode — click a block to add a note (Esc to exit)";
+    this.modePill.textContent = MODE_TEXT_DEFAULT;
     this.layer.appendChild(this.modePill);
+
+    // Screen-reader announcements for state that is otherwise only visual.
+    this.liveRegion = doc.createElement("div");
+    this.liveRegion.className = "wm-sr-only";
+    this.liveRegion.setAttribute("aria-live", "polite");
+    this.liveRegion.setAttribute("role", "status");
+    this.layer.appendChild(this.liveRegion);
 
     this.sidebar = doc.createElement("aside");
     this.sidebar.className = `wm-sidebar wm-${options.position}`;
@@ -218,9 +231,16 @@ export class AnnotatorUI {
     this.hoverBox.style.display = "block";
   }
 
-  setModeIndicator(on: boolean): void {
+  setModeIndicator(on: boolean, text?: string): void {
+    this.modePill.textContent = text ?? MODE_TEXT_DEFAULT;
     this.modePill.style.display = on ? "block" : "none";
+    this.announce(on ? text ?? "Annotation mode on" : "Annotation mode off");
     if (!on) this.setHoverTarget(null);
+  }
+
+  /** Announce a transient message to assistive tech. */
+  announce(message: string): void {
+    this.liveRegion.textContent = message;
   }
 
   private positionBox(box: HTMLElement, target: Element): void {
@@ -338,6 +358,17 @@ export class AnnotatorUI {
         } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
           finish("save");
+        } else if (e.key === "Tab") {
+          // Trap focus inside the dialog: the host page's tab order is irrelevant here.
+          const focusables = [...composer.querySelectorAll<HTMLElement>("textarea, button")];
+          if (!focusables.length) return;
+          const active = this.root.activeElement as HTMLElement | null;
+          const index = active ? focusables.indexOf(active) : -1;
+          const next = e.shiftKey
+            ? focusables[(index <= 0 ? focusables.length : index) - 1]
+            : focusables[(index + 1) % focusables.length];
+          e.preventDefault();
+          next?.focus();
         }
       });
 
@@ -352,6 +383,7 @@ export class AnnotatorUI {
 
       this.layer.appendChild(composer);
       this.composerEl = composer;
+      this.composerReturnFocus = this.doc.activeElement as HTMLElement | null;
       textarea.focus();
     });
   }
@@ -359,6 +391,10 @@ export class AnnotatorUI {
   closeComposer(): void {
     this.composerEl?.remove();
     this.composerEl = null;
+    // Hand focus back where it came from, if that element is still around.
+    const back = this.composerReturnFocus;
+    this.composerReturnFocus = null;
+    if (back && back.isConnected) back.focus?.();
   }
 
   hasComposerOpen(): boolean {
@@ -427,16 +463,31 @@ export class AnnotatorUI {
 
   private renderTabs(): void {
     this.tabBar.textContent = "";
-    for (const tab of this.tabs) {
+    this.tabs.forEach((tab, index) => {
       const btn = this.doc.createElement("button");
       btn.className = "wm-tab";
       btn.type = "button";
       btn.setAttribute("role", "tab");
+      btn.dataset.tabId = tab.id;
       btn.setAttribute("aria-selected", String(tab.id === this.activeTab));
+      // Roving tabindex: only the selected tab is in the page tab order.
+      btn.tabIndex = tab.id === this.activeTab ? 0 : -1;
       btn.textContent = tab.label;
       btn.addEventListener("click", () => this.activateTab(tab.id));
+      btn.addEventListener("keydown", (e) => {
+        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "Home" && e.key !== "End") return;
+        e.preventDefault();
+        const last = this.tabs.length - 1;
+        const next =
+          e.key === "Home" ? 0
+          : e.key === "End" ? last
+          : e.key === "ArrowRight" ? (index + 1) % this.tabs.length
+          : (index - 1 + this.tabs.length) % this.tabs.length;
+        this.activateTab(this.tabs[next].id);
+        this.tabBar.querySelector<HTMLElement>(`.wm-tab[data-tab-id="${this.tabs[next].id}"]`)?.focus();
+      });
       this.tabBar.appendChild(btn);
-    }
+    });
     const spacer = this.doc.createElement("span");
     spacer.className = "wm-spacer";
     this.tabBar.appendChild(spacer);
@@ -445,13 +496,15 @@ export class AnnotatorUI {
     this.tabBar.appendChild(close);
   }
 
-  private activateTab(id: string): void {
+  /** Switch the sidebar to a tab by id (falls back to Notes for unknown ids). */
+  activateTab(id: string): void {
     this.activeTab = this.tabs.some((t) => t.id === id) ? id : "notes";
     this.tabCleanup?.();
     this.tabCleanup = null;
-    for (const btn of this.tabBar.querySelectorAll(".wm-tab[role=tab]")) {
-      const tab = this.tabs[[...this.tabBar.querySelectorAll(".wm-tab[role=tab]")].indexOf(btn)];
-      btn.setAttribute("aria-selected", String(tab?.id === this.activeTab));
+    for (const btn of this.tabBar.querySelectorAll<HTMLElement>(".wm-tab[role=tab]")) {
+      const selected = btn.dataset.tabId === this.activeTab;
+      btn.setAttribute("aria-selected", String(selected));
+      btn.tabIndex = selected ? 0 : -1;
     }
     this.sidebarBody.textContent = "";
     if (this.activeTab === "notes") {
@@ -528,6 +581,8 @@ export class AnnotatorUI {
       const id = note.annotation.id;
       if (!detached) {
         actions.appendChild(this.makeButton("Edit", "wm-btn", () => this.noteCallbacks.onEdit(id)));
+      } else {
+        actions.appendChild(this.makeButton("Re-attach", "wm-btn", () => this.noteCallbacks.onReattach(id)));
       }
       actions.appendChild(this.makeButton("Copy link", "wm-btn", () => this.noteCallbacks.onCopyLink(id)));
       for (const action of this.noteActions) {

@@ -52,8 +52,29 @@ for (const [name, factory] of [
       expect(notes).toHaveLength(1);
       expect(notes[0].body.text).toBe("edited");
     });
+
+    it("round-trips settings without touching annotations", async () => {
+      const storage = factory();
+      await storage.save(makeAnnotation("a1"), page);
+      expect(await storage.getSetting("chat.apiKey")).toBeUndefined();
+
+      await storage.setSetting("chat.apiKey", "sk-secret");
+      await storage.setSetting("chat.model", "claude-sonnet-5");
+      expect(await storage.getSetting("chat.apiKey")).toBe("sk-secret");
+      expect(await storage.getSetting("chat.model")).toBe("claude-sonnet-5");
+      // settings and annotations live side by side
+      expect(await storage.getPage(page)).toHaveLength(1);
+    });
   });
 }
+
+describe("LocalStorageStorage settings persistence", () => {
+  it("survives adapter re-creation", async () => {
+    localStorage.clear();
+    await createLocalStorageStorage("wm-test").setSetting("ui.theme", "dark");
+    expect(await createLocalStorageStorage("wm-test").getSetting("ui.theme")).toBe("dark");
+  });
+});
 
 describe("LocalStorageStorage persistence", () => {
   it("survives adapter re-creation (reload simulation)", async () => {
