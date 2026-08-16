@@ -119,6 +119,11 @@
       "visibility": "unlisted",
       "name": "GM_trystero (trystero devtool)",
       "blurb": "Exposes the full trystero WebRTC P2P API on window.GM_trystero on any page, for console-driven real-time experiments"
+    },
+    {
+      "file": "scripts/tuta-inbox-janitor.user.js",
+      "name": "Tuta Inbox Janitor",
+      "blurb": "Scan your Tuta mailbox, group it by sender, and clean it up with shareable rules - dry-run first, move to Trash/Spam/folders, never permanent delete"
     }
   ]
 }

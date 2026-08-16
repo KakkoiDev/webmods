@@ -1,0 +1,50 @@
+{
+  "_readme": "Example Tuta Inbox Janitor config. Paste it into the Rules tab (Paste config -> Save rules), then edit. Rules run top to bottom; the first matching action rule wins. 'keep' rules are evaluated first and protect a mail from every action rule. Targets must be folders that exist in your mailbox - nothing is ever deleted permanently.",
+  "version": 1,
+  "scanFolders": ["Inbox"],
+  "rules": [
+    {
+      "id": "keep-humans",
+      "name": "KEEP - anything from a real person's domain",
+      "enabled": true,
+      "kind": "keep",
+      "when": { "field": "domain", "op": "regex", "value": "^(gmail\\.com|tutanota\\.com|tuta\\.com)$" },
+      "from": ["*"]
+    },
+    {
+      "id": "keep-money",
+      "name": "KEEP - banks, invoices, government",
+      "enabled": true,
+      "kind": "keep",
+      "when": { "field": "domain", "op": "regex", "value": "(bank|paypal|stripe|invoice|gouv\\.fr|\\.go\\.jp)" },
+      "from": ["*"]
+    },
+    {
+      "id": "job-alerts",
+      "name": "Job-board alerts -> Archive",
+      "enabled": true,
+      "kind": "action",
+      "when": { "field": "from", "op": "regex", "value": "(jobalert|jobs-|indeed|glassdoor|monster|linkedin)" },
+      "action": { "target": "Archive" },
+      "from": ["Inbox"]
+    },
+    {
+      "id": "newsletters",
+      "name": "Anything with an unsubscribe link from a newsletter host -> Trash",
+      "enabled": true,
+      "kind": "action",
+      "when": { "field": "domain", "op": "regex", "value": "(mailchimp|sendgrid|substack|ccsend|mailer|e\\.|em-)" },
+      "action": { "target": "Trash" },
+      "from": ["Inbox"]
+    },
+    {
+      "id": "promo-subjects",
+      "name": "Obvious promo subjects -> Trash",
+      "enabled": true,
+      "kind": "action",
+      "when": { "field": "subject", "op": "regex", "value": "(% ?off|sale|promo|réduction|クーポン|限定セール)" },
+      "action": { "target": "Trash" },
+      "from": ["Inbox"]
+    }
+  ]
+}
