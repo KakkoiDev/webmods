@@ -545,6 +545,25 @@ function createCommandRegistry() {
   };
 }
 
+// src/dom-utils.ts
+function download(filename, text, type) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5e3);
+}
+async function copyText(text) {
+  const g = globalThis;
+  if (typeof g.GM_setClipboard === "function") {
+    g.GM_setClipboard(text);
+    return;
+  }
+  await navigator.clipboard.writeText(text);
+}
+
 // src/events.ts
 var Emitter = class {
   constructor() {
@@ -1722,11 +1741,8 @@ function createAnnotator(options = {}) {
     return `${base}${sep}${NOTE_FRAGMENT_PARAM}=${encodeURIComponent(id)}`;
   }
   async function copyNoteLink(id) {
-    const url = getNoteURL(id);
     try {
-      const g = globalThis;
-      if (typeof g.GM_setClipboard === "function") g.GM_setClipboard(url);
-      else await navigator.clipboard.writeText(url);
+      await copyText(getNoteURL(id));
     } catch (err) {
       fail(err, "copy-link");
     }
@@ -2012,34 +2028,36 @@ function base64UrlDecode(encoded) {
   const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
   return new TextDecoder().decode(bytes);
 }
+async function collectPages(storage, currentPage) {
+  if (storage.listAll && storage.listPages) {
+    const [all, summaries] = await Promise.all([storage.listAll(), storage.listPages()]);
+    const identities = new Map(summaries.map((s) => [s.page.id, s.page]));
+    const byPage = /* @__PURE__ */ new Map();
+    for (const a of all) {
+      const list = byPage.get(a.pageId) ?? [];
+      list.push(a);
+      byPage.set(a.pageId, list);
+    }
+    return [...byPage.entries()].map(([pageId, annotations]) => ({
+      identity: identities.get(pageId) ?? {
+        id: pageId,
+        url: annotations[0]?.anchor.url ?? "",
+        normalizedUrl: annotations[0]?.anchor.url ?? ""
+      },
+      annotations
+    }));
+  }
+  return [{ identity: currentPage, annotations: await storage.getPage(currentPage) }];
+}
 function createPortableDataPlugin() {
   let ctx = null;
   const requireCtx = () => {
     if (!ctx) throw new Error("portable-data plugin is not attached to an annotator (call annotator.use(plugin) first)");
     return ctx;
   };
-  async function collectPages() {
+  async function collectOwnPages() {
     const { storage, getPage } = requireCtx();
-    if (storage.listAll && storage.listPages) {
-      const [all, summaries] = await Promise.all([storage.listAll(), storage.listPages()]);
-      const identities = new Map(summaries.map((s) => [s.page.id, s.page]));
-      const byPage = /* @__PURE__ */ new Map();
-      for (const a of all) {
-        const list = byPage.get(a.pageId) ?? [];
-        list.push(a);
-        byPage.set(a.pageId, list);
-      }
-      return [...byPage.entries()].map(([pageId, annotations]) => ({
-        identity: identities.get(pageId) ?? {
-          id: pageId,
-          url: annotations[0]?.anchor.url ?? "",
-          normalizedUrl: annotations[0]?.anchor.url ?? ""
-        },
-        annotations
-      }));
-    }
-    const page = getPage();
-    return [{ identity: page, annotations: await storage.getPage(page) }];
+    return collectPages(storage, getPage());
   }
   const plugin = {
     name: "portable-data",
@@ -2057,7 +2075,7 @@ function createPortableDataPlugin() {
         format: "wm-annotate-export",
         schemaVersion: SCHEMA_VERSION,
         exportedAt: Date.now(),
-        pages: await collectPages()
+        pages: await collectOwnPages()
       };
     },
     async importJSON(data, strategy = "skip") {
@@ -2104,7 +2122,7 @@ function createPortableDataPlugin() {
       return result;
     },
     async exportMarkdown() {
-      const pages = await collectPages();
+      const pages = await collectOwnPages();
       const sections = [];
       for (const { identity, annotations } of pages) {
         if (!annotations.length) continue;
@@ -2159,11 +2177,295 @@ function createPortableDataPlugin() {
   return plugin;
 }
 
+// src/plugins/global-browser.ts
+var MAX_RESULTS = 5e3;
+function hostOf(url) {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+function parseQuery(query) {
+  const tokens = [];
+  const sites = [];
+  for (const raw of query.toLowerCase().split(/\s+/)) {
+    if (!raw) continue;
+    if (raw.startsWith("site:")) {
+      const value = raw.slice("site:".length);
+      if (value) sites.push(value);
+    } else {
+      tokens.push(raw);
+    }
+  }
+  return { tokens, sites };
+}
+var FIELD_ORDER = ["body", "quote", "url", "title"];
+function fieldValues(page, annotation) {
+  return {
+    body: annotation.body.text.toLowerCase(),
+    quote: (annotation.anchor.textQuote?.exact ?? "").toLowerCase(),
+    url: page.normalizedUrl.toLowerCase(),
+    title: (page.title ?? "").toLowerCase()
+  };
+}
+function searchAnnotations(pages, query) {
+  const { tokens, sites } = parseQuery(query);
+  const results = [];
+  for (const { identity, annotations } of pages) {
+    if (sites.length && !sites.every((s) => hostOf(identity.normalizedUrl).includes(s))) continue;
+    for (const annotation of annotations) {
+      const values = fieldValues(identity, annotation);
+      const matchesAll = tokens.every((token) => FIELD_ORDER.some((field) => values[field].includes(token)));
+      if (!matchesAll) continue;
+      const first = tokens[0];
+      const matched = first ? FIELD_ORDER.find((field) => values[field].includes(first)) ?? "body" : "body";
+      results.push({ page: identity, annotation, matched });
+    }
+  }
+  return results.sort((a, b) => {
+    const byPage = a.page.normalizedUrl.localeCompare(b.page.normalizedUrl);
+    if (byPage !== 0) return byPage;
+    return b.annotation.updatedAt - a.annotation.updatedAt;
+  });
+}
+function noteLink(annotation) {
+  const base = annotation.anchor.url.split("#")[0];
+  return `${base}#${NOTE_FRAGMENT_PARAM}=${encodeURIComponent(annotation.id)}`;
+}
+function formatDate(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+var CSS3 = `
+.wm-gb { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.wm-gb input {
+  font: inherit; font-size: 13px; padding: 5px 8px; width: 100%;
+  border: 1px solid #d0d7de; border-radius: 6px;
+}
+.wm-gb input:focus { outline: 2px solid #6366f1; outline-offset: -1px; }
+.wm-gb-summary { font-size: 12px; color: #57606a; }
+.wm-gb-list { flex: 1; overflow: auto; }
+.wm-gb-page { border: 1px solid #d0d7de; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+.wm-gb-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #f6f8fa; }
+.wm-gb-toggle {
+  font: inherit; font-size: 12.5px; font-weight: 600; text-align: left; flex: 1;
+  border: 0; background: none; cursor: pointer; color: #1f2328; padding: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wm-gb-toggle:focus-visible { outline: 2px solid #6366f1; }
+.wm-gb-host { font-size: 11px; color: #57606a; font-weight: 400; }
+.wm-gb-count { font-size: 11px; color: #57606a; }
+.wm-gb-export {
+  font: inherit; font-size: 11px; padding: 2px 8px; cursor: pointer;
+  border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #1f2328;
+}
+.wm-gb-note {
+  display: block; width: 100%; text-align: left; font: inherit; cursor: pointer;
+  border: 0; border-top: 1px solid #d0d7de; background: #fff; padding: 7px 9px;
+}
+.wm-gb-note:hover { background: #f6f8fa; }
+.wm-gb-note:focus-visible { outline: 2px solid #6366f1; outline-offset: -2px; }
+.wm-gb-excerpt { font-size: 12.5px; color: #1f2328; }
+.wm-gb-context { font-size: 11px; color: #57606a; margin-top: 3px; }
+.wm-gb-empty, .wm-gb-warn { font-size: 12.5px; color: #57606a; padding: 8px 2px; }
+`;
+function createGlobalBrowserPlugin() {
+  let ctx = null;
+  const cleanups = [];
+  let render = null;
+  const requireCtx = () => {
+    if (!ctx) throw new Error("global-browser plugin is not attached to an annotator (call annotator.use(plugin) first)");
+    return ctx;
+  };
+  const supported = (c) => !!(c.storage.listAll && c.storage.listPages);
+  async function search(query) {
+    const c = requireCtx();
+    if (!supported(c)) return [];
+    return searchAnnotations(await collectPages(c.storage, c.getPage()), query);
+  }
+  function exportPage(group) {
+    const doc = {
+      format: "wm-annotate-export",
+      schemaVersion: SCHEMA_VERSION,
+      exportedAt: Date.now(),
+      pages: [group]
+    };
+    const slug = (group.identity.title || hostOf(group.identity.normalizedUrl) || "page").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+    download(`webmods-annotations-${slug || "page"}.json`, JSON.stringify(doc, null, 2), "application/json");
+  }
+  const plugin = {
+    name: "global-browser",
+    setup(pluginCtx) {
+      ctx = pluginCtx;
+      cleanups.push(pluginCtx.commands.register("browser.search", (query) => search(String(query ?? ""))));
+      cleanups.push(pluginCtx.commands.register("browser.open", () => pluginCtx.activateSidebarTab("all-pages")));
+      cleanups.push(
+        pluginCtx.addSidebarTab({
+          id: "all-pages",
+          label: "All pages",
+          render(container) {
+            const style = document.createElement("style");
+            style.textContent = CSS3;
+            container.appendChild(style);
+            const root = document.createElement("div");
+            root.className = "wm-gb";
+            container.appendChild(root);
+            if (!supported(pluginCtx)) {
+              const note = document.createElement("div");
+              note.className = "wm-gb-empty";
+              note.textContent = "This storage adapter does not support browsing all pages.";
+              root.appendChild(note);
+              return () => {
+              };
+            }
+            const input = document.createElement("input");
+            input.type = "search";
+            input.setAttribute("aria-label", "Search all annotations");
+            input.placeholder = "Search notes\u2026 (site:example.com to filter)";
+            const summary = document.createElement("div");
+            summary.className = "wm-gb-summary";
+            const list = document.createElement("div");
+            list.className = "wm-gb-list";
+            root.append(input, summary, list);
+            const collapsed = /* @__PURE__ */ new Set();
+            let generation = 0;
+            const paint = async () => {
+              const mine = ++generation;
+              const query = input.value.trim();
+              let pages;
+              try {
+                pages = await collectPages(pluginCtx.storage, pluginCtx.getPage());
+              } catch {
+                return;
+              }
+              if (mine !== generation) return;
+              const results = searchAnnotations(pages, query);
+              const shown = results.slice(0, MAX_RESULTS);
+              const byPage = /* @__PURE__ */ new Map();
+              for (const r of shown) {
+                const bucket = byPage.get(r.page.id) ?? [];
+                bucket.push(r);
+                byPage.set(r.page.id, bucket);
+              }
+              summary.textContent = `${results.length} note${results.length === 1 ? "" : "s"} on ${byPage.size} page${byPage.size === 1 ? "" : "s"}`;
+              list.textContent = "";
+              if (results.length > shown.length) {
+                const warn = document.createElement("div");
+                warn.className = "wm-gb-warn";
+                warn.textContent = `Showing ${shown.length} of ${results.length} notes \u2014 refine your search.`;
+                list.appendChild(warn);
+              }
+              if (!shown.length) {
+                const empty = document.createElement("div");
+                empty.className = "wm-gb-empty";
+                empty.textContent = query ? "No notes match that search." : "No annotations stored yet.";
+                list.appendChild(empty);
+                return;
+              }
+              const collapseByDefault = !query && byPage.size > 5;
+              for (const [pageId, group] of byPage) {
+                const identity = group[0].page;
+                const card = document.createElement("div");
+                card.className = "wm-gb-page";
+                card.dataset.pageId = pageId;
+                const head = document.createElement("div");
+                head.className = "wm-gb-head";
+                const isCollapsed = collapsed.has(pageId) || collapseByDefault && !collapsed.has(`open:${pageId}`);
+                const toggle = document.createElement("button");
+                toggle.type = "button";
+                toggle.className = "wm-gb-toggle";
+                toggle.setAttribute("aria-expanded", String(!isCollapsed));
+                toggle.textContent = identity.title || identity.normalizedUrl;
+                const host = document.createElement("span");
+                host.className = "wm-gb-host";
+                host.textContent = ` \u2014 ${hostOf(identity.normalizedUrl)}`;
+                toggle.appendChild(host);
+                toggle.addEventListener("click", () => {
+                  if (collapsed.has(pageId)) {
+                    collapsed.delete(pageId);
+                    collapsed.add(`open:${pageId}`);
+                  } else {
+                    collapsed.add(pageId);
+                    collapsed.delete(`open:${pageId}`);
+                  }
+                  void paint();
+                });
+                const count = document.createElement("span");
+                count.className = "wm-gb-count";
+                count.textContent = `${group.length}`;
+                const exportBtn = document.createElement("button");
+                exportBtn.type = "button";
+                exportBtn.className = "wm-gb-export";
+                exportBtn.textContent = "Export";
+                exportBtn.setAttribute("aria-label", `Export annotations for ${identity.title || identity.normalizedUrl}`);
+                exportBtn.addEventListener("click", () => {
+                  const full = pages.find((p) => p.identity.id === pageId);
+                  if (full) exportPage(full);
+                });
+                head.append(toggle, count, exportBtn);
+                card.appendChild(head);
+                if (!isCollapsed) {
+                  for (const { annotation } of group) {
+                    const row = document.createElement("button");
+                    row.type = "button";
+                    row.className = "wm-gb-note";
+                    row.dataset.noteId = annotation.id;
+                    const excerpt = document.createElement("div");
+                    excerpt.className = "wm-gb-excerpt";
+                    excerpt.textContent = annotation.body.text.slice(0, 120);
+                    const context = document.createElement("div");
+                    context.className = "wm-gb-context";
+                    const quote = annotation.anchor.textQuote?.exact;
+                    context.textContent = `${formatDate(annotation.updatedAt)}${quote ? ` \xB7 ${quote.slice(0, 60)}` : ""}`;
+                    row.append(excerpt, context);
+                    row.addEventListener("click", () => {
+                      if (pageId === pluginCtx.getPage().id) {
+                        pluginCtx.activateSidebarTab("notes");
+                        void pluginCtx.scrollToNote(annotation.id);
+                      } else {
+                        window.open(noteLink(annotation), "_blank", "noopener");
+                      }
+                    });
+                    card.appendChild(row);
+                  }
+                }
+                list.appendChild(card);
+              }
+            };
+            render = () => void paint();
+            let debounce = null;
+            input.addEventListener("input", () => {
+              if (debounce) clearTimeout(debounce);
+              debounce = setTimeout(() => void paint(), 200);
+            });
+            void paint();
+            return () => {
+              if (debounce) clearTimeout(debounce);
+              render = null;
+            };
+          }
+        })
+      );
+      cleanups.push(pluginCtx.on("note:save", () => render?.()));
+      cleanups.push(pluginCtx.on("note:delete", () => render?.()));
+    },
+    destroy() {
+      for (const off of cleanups.splice(0)) off();
+      render = null;
+      ctx = null;
+    },
+    search
+  };
+  return plugin;
+}
+
 // src/plugins/chat.ts
 var MAX_PAGE_CHARS = 12e3;
 var MAX_TARGET_CHARS = 4e3;
 var MAX_SURROUNDING_CHARS = 1e3;
-var CSS3 = `
+var CSS4 = `
 .wm-chat { display: flex; flex-direction: column; height: 100%; gap: 8px; }
 .wm-chat-scope { display: flex; flex-direction: column; gap: 6px; }
 .wm-chat-scope select {
@@ -2358,7 +2660,7 @@ function createChatPlugin(options) {
           label: "Chat",
           render(container) {
             const style = document.createElement("style");
-            style.textContent = CSS3;
+            style.textContent = CSS4;
             container.appendChild(style);
             const root = document.createElement("div");
             root.className = "wm-chat";
@@ -2774,6 +3076,8 @@ export {
   buildRange,
   buildSelector,
   buildXPath,
+  collectPages,
+  copyText,
   createAnnotator as create,
   createAnchor,
   createAnnotator,
@@ -2784,12 +3088,14 @@ export {
   createDefaultPageIdentityResolver,
   createEchoProvider,
   createExcalidrawPlugin,
+  createGlobalBrowserPlugin,
   createIndexedDBStorage,
   createLocalStorageStorage,
   createMemoryStorage,
   createPortableDataPlugin,
   createRangeAnchor,
   createTampermonkeyStorage,
+  download,
   emptyDB,
   generateId,
   hashString,
@@ -2800,11 +3106,13 @@ export {
   migrateDB,
   normalizeText,
   normalizeUrl,
+  noteLink,
   rangeOffsets,
   renderMarkdown,
   resolveAnchor,
   resolveRangeInBlock,
   scoreBlock,
+  searchAnnotations,
   stripOwnFragment,
   createTampermonkeyStorage as tampermonkeyStorage,
   textSimilarity,

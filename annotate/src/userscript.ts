@@ -4,23 +4,15 @@
  * All annotation logic lives in the library.
  */
 import { createAnnotator } from "./annotator";
+import { download } from "./dom-utils";
 import { createChatPlugin } from "./plugins/chat";
+import { createGlobalBrowserPlugin } from "./plugins/global-browser";
 import { createExcalidrawPlugin } from "./plugins/excalidraw";
 import { createPortableDataPlugin } from "./plugins/portable-data";
 import { createClaudeProvider } from "./providers/claude";
 import { createTampermonkeyStorage } from "./storage";
 
 declare function GM_registerMenuCommand(caption: string, onClick: () => void): void;
-
-function download(filename: string, text: string, type: string): void {
-  const blob = new Blob([text], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
 
 function pickFile(accept: string): Promise<string | null> {
   return new Promise((resolve) => {
@@ -50,6 +42,8 @@ export function startUserscript(): void {
   annotator.use(portable);
   // Lazy: Excalidraw only loads (from esm.sh) the first time a board is opened.
   annotator.use(createExcalidrawPlugin());
+  // Tiny and lazy: all work happens when the All pages tab is opened.
+  annotator.use(createGlobalBrowserPlugin());
 
   // The Chat tab only exists once an API key is configured; nothing is ever
   // sent anywhere until the user presses Send.
@@ -63,6 +57,7 @@ export function startUserscript(): void {
   if (typeof GM_registerMenuCommand === "function") {
     GM_registerMenuCommand("Toggle annotate mode (Alt+Shift+A)", () => annotator.toggle());
     GM_registerMenuCommand("Toggle notes sidebar", () => annotator.toggleSidebar());
+    GM_registerMenuCommand("Browse all annotations", () => annotator.commands.execute("browser.open"));
     GM_registerMenuCommand("Export annotations (JSON)", async () => {
       const doc = await portable.exportJSON();
       download(`webmods-annotations-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(doc, null, 2), "application/json");

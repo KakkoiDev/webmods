@@ -9,6 +9,11 @@ export {
   migrateDB,
 } from "./storage";
 export { createPortableDataPlugin, validateAnnotation, validateExportDocument } from "./plugins/portable-data";
+export { createGlobalBrowserPlugin, searchAnnotations, noteLink } from "./plugins/global-browser";
+export type { GlobalBrowserPlugin, GlobalSearchResult } from "./plugins/global-browser";
+export { collectPages } from "./plugins/portable-data";
+export type { PageGroup } from "./plugins/portable-data";
+export { download, copyText } from "./dom-utils";
 export { createChatPlugin, createEchoProvider } from "./plugins/chat";
 export type {
   ChatProvider,

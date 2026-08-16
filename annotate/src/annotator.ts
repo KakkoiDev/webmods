@@ -2,6 +2,7 @@ import { createAnchor, resolveAnchor } from "./anchors";
 import { createRangeAnchor } from "./ranges";
 import { buildExcludeFn, createDefaultBlockResolver, isAnnotatorUI } from "./blocks";
 import { createCommandRegistry } from "./commands";
+import { copyText } from "./dom-utils";
 import { Emitter, generateId } from "./events";
 import { createDefaultPageIdentityResolver, stripOwnFragment } from "./page-identity";
 import { createMemoryStorage } from "./storage";
@@ -226,11 +227,8 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
   }
 
   async function copyNoteLink(id: string): Promise<void> {
-    const url = getNoteURL(id);
     try {
-      const g = globalThis as Record<string, any>;
-      if (typeof g.GM_setClipboard === "function") g.GM_setClipboard(url);
-      else await navigator.clipboard.writeText(url);
+      await copyText(getNoteURL(id));
     } catch (err) {
       fail(err, "copy-link");
     }

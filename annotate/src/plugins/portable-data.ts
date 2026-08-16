@@ -1,4 +1,4 @@
-import type { Annotation, AnnotatorPlugin, PageIdentity, PluginContext } from "../types";
+import type { Annotation, AnnotationStorage, AnnotatorPlugin, PageIdentity, PluginContext } from "../types";
 import { INLINE_FRAGMENT_PARAM, SCHEMA_VERSION } from "../types";
 
 export interface ExportDocument {
@@ -79,6 +79,37 @@ export interface PortableDataAPI {
 
 export interface PortableDataPlugin extends AnnotatorPlugin, PortableDataAPI {}
 
+export interface PageGroup {
+  identity: PageIdentity;
+  annotations: Annotation[];
+}
+
+/**
+ * Group every stored annotation by page. Adapters without global listing
+ * (`listAll`/`listPages`) degrade to the current page only.
+ */
+export async function collectPages(storage: AnnotationStorage, currentPage: PageIdentity): Promise<PageGroup[]> {
+  if (storage.listAll && storage.listPages) {
+    const [all, summaries] = await Promise.all([storage.listAll(), storage.listPages()]);
+    const identities = new Map(summaries.map((s) => [s.page.id, s.page]));
+    const byPage = new Map<string, Annotation[]>();
+    for (const a of all) {
+      const list = byPage.get(a.pageId) ?? [];
+      list.push(a);
+      byPage.set(a.pageId, list);
+    }
+    return [...byPage.entries()].map(([pageId, annotations]) => ({
+      identity: identities.get(pageId) ?? {
+        id: pageId,
+        url: annotations[0]?.anchor.url ?? "",
+        normalizedUrl: annotations[0]?.anchor.url ?? "",
+      },
+      annotations,
+    }));
+  }
+  return [{ identity: currentPage, annotations: await storage.getPage(currentPage) }];
+}
+
 export function createPortableDataPlugin(): PortableDataPlugin {
   let ctx: PluginContext | null = null;
 
@@ -87,29 +118,9 @@ export function createPortableDataPlugin(): PortableDataPlugin {
     return ctx;
   };
 
-  async function collectPages(): Promise<ExportDocument["pages"]> {
+  async function collectOwnPages(): Promise<ExportDocument["pages"]> {
     const { storage, getPage } = requireCtx();
-    if (storage.listAll && storage.listPages) {
-      const [all, summaries] = await Promise.all([storage.listAll(), storage.listPages()]);
-      const identities = new Map(summaries.map((s) => [s.page.id, s.page]));
-      const byPage = new Map<string, Annotation[]>();
-      for (const a of all) {
-        const list = byPage.get(a.pageId) ?? [];
-        list.push(a);
-        byPage.set(a.pageId, list);
-      }
-      return [...byPage.entries()].map(([pageId, annotations]) => ({
-        identity: identities.get(pageId) ?? {
-          id: pageId,
-          url: annotations[0]?.anchor.url ?? "",
-          normalizedUrl: annotations[0]?.anchor.url ?? "",
-        },
-        annotations,
-      }));
-    }
-    // Storage without global listing: export the current page only.
-    const page = getPage();
-    return [{ identity: page, annotations: await storage.getPage(page) }];
+    return collectPages(storage, getPage());
   }
 
   const plugin: PortableDataPlugin = {
@@ -131,7 +142,7 @@ export function createPortableDataPlugin(): PortableDataPlugin {
         format: "wm-annotate-export",
         schemaVersion: SCHEMA_VERSION,
         exportedAt: Date.now(),
-        pages: await collectPages(),
+        pages: await collectOwnPages(),
       };
     },
 
@@ -181,7 +192,7 @@ export function createPortableDataPlugin(): PortableDataPlugin {
     },
 
     async exportMarkdown(): Promise<string> {
-      const pages = await collectPages();
+      const pages = await collectOwnPages();
       const sections: string[] = [];
       for (const { identity, annotations } of pages) {
         if (!annotations.length) continue;
