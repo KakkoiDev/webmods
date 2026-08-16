@@ -4,6 +4,8 @@ Framework-agnostic TypeScript library for annotating arbitrary web pages: Markdo
 
 Spec: [docs/webmods-annotate-spec.md](../docs/webmods-annotate-spec.md). This implements the spec's initial recommended scope (§36): core + robust block anchors + Tampermonkey shared storage + Markdown notes + notes sidebar + note anchor links + JSON import/export + minified one-import build.
 
+Configuring the optional AI Chat tab needs an Anthropic API key — where to find it (it is workspace-scoped, and the obvious Console page refuses you) is documented in [docs/ANTHROPIC-API-KEY.md](../docs/ANTHROPIC-API-KEY.md).
+
 ## Roadmap
 
 Implementation plans for the next features (robustness pass, text-range annotations, AI chat pane, global annotation browser, backlog) live in [plans/](plans/) — start at [plans/00-OVERVIEW.md](plans/00-OVERVIEW.md).
