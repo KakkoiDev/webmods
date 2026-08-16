@@ -9,6 +9,19 @@ export {
   migrateDB,
 } from "./storage";
 export { createPortableDataPlugin, validateAnnotation, validateExportDocument } from "./plugins/portable-data";
+export { createChatPlugin, createEchoProvider } from "./plugins/chat";
+export type {
+  ChatProvider,
+  ChatPlugin,
+  ChatMessage,
+  ChatRequest,
+  ChatResponse,
+  ChatChunk,
+  ChatScope,
+  AnnotationChatContext,
+} from "./plugins/chat";
+export { createClaudeProvider } from "./providers/claude";
+export type { ClaudeProviderOptions } from "./providers/claude";
 export { createExcalidrawPlugin, isExcalidrawAttachment } from "./plugins/excalidraw";
 export type { ExcalidrawAttachment, ExcalidrawScene, ExcalidrawPlugin, ExcalidrawLoader } from "./plugins/excalidraw";
 export { createDefaultPageIdentityResolver, normalizeUrl, stripOwnFragment, hashString } from "./page-identity";

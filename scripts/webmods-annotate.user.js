@@ -1915,6 +1915,311 @@ button.wm-btn.wm-danger { color: #d1242f; }
     return api;
   }
 
+  // src/plugins/chat.ts
+  var MAX_PAGE_CHARS = 12e3;
+  var MAX_TARGET_CHARS = 4e3;
+  var MAX_SURROUNDING_CHARS = 1e3;
+  var CSS3 = `
+.wm-chat { display: flex; flex-direction: column; height: 100%; gap: 8px; }
+.wm-chat-scope { display: flex; flex-direction: column; gap: 6px; }
+.wm-chat-scope select {
+  font: inherit; font-size: 12.5px; padding: 4px 6px;
+  border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #1f2328; width: 100%;
+}
+.wm-chat-preview { font-size: 11.5px; color: #57606a; }
+.wm-chat-log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 8px; min-height: 80px; }
+.wm-chat-msg { font-size: 13px; border-radius: 8px; padding: 7px 9px; word-wrap: break-word; }
+.wm-chat-user { background: #eef1f4; }
+.wm-chat-assistant { background: #fff; border: 1px solid #d0d7de; }
+.wm-chat-msg p:first-child, .wm-chat-msg h1, .wm-chat-msg h2, .wm-chat-msg h3 { margin-top: 0; }
+.wm-chat-msg p, .wm-chat-msg ul, .wm-chat-msg ol, .wm-chat-msg pre, .wm-chat-msg blockquote { margin: 0 0 6px; }
+.wm-chat-msg pre { background: #f6f8fa; padding: 6px 8px; border-radius: 6px; overflow: auto; font-size: 12px; }
+.wm-chat-msg code { background: #f6f8fa; padding: 1px 4px; border-radius: 4px; font-size: 12px; }
+.wm-chat-error { font-size: 12px; color: #d1242f; }
+.wm-chat-input { display: flex; flex-direction: column; gap: 6px; }
+.wm-chat-input textarea {
+  font: inherit; font-size: 13px; padding: 6px 8px; min-height: 56px; resize: vertical;
+  border: 1px solid #d0d7de; border-radius: 6px; width: 100%;
+}
+.wm-chat-input textarea:focus { outline: 2px solid #6366f1; outline-offset: -1px; }
+.wm-chat-row { display: flex; gap: 6px; align-items: center; }
+.wm-chat-hint { flex: 1; font-size: 11px; color: #57606a; }
+.wm-chat-send {
+  font: inherit; font-size: 12.5px; padding: 5px 14px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #6366f1; background: #6366f1; color: #fff;
+}
+.wm-chat-send:focus-visible { outline: 2px solid #4338ca; }
+.wm-chat-empty { font-size: 12.5px; color: #57606a; }
+`;
+  function isAsyncIterable(value) {
+    return !!value && typeof value[Symbol.asyncIterator] === "function";
+  }
+  function createChatPlugin(options) {
+    const maxPageChars = options.maxPageChars ?? MAX_PAGE_CHARS;
+    let ctx = null;
+    let transcript = [];
+    let inFlight = null;
+    const cleanups = [];
+    let mounted = null;
+    const requireCtx = () => {
+      if (!ctx) throw new Error("chat plugin is not attached to an annotator (call annotator.use(plugin) first)");
+      return ctx;
+    };
+    function buildContext(scope, noteId) {
+      const c = requireCtx();
+      const page = c.getPage();
+      if (scope === "page") {
+        const text = document.body?.innerText ?? "";
+        return { page, pageText: text.slice(0, maxPageChars) };
+      }
+      if (scope === "all-notes") {
+        return { page, pageAnnotations: c.getNotes().map((n) => n.annotation) };
+      }
+      const note = c.getNotes().find((n) => n.annotation.id === noteId) ?? c.getNotes()[0];
+      if (!note) return { page };
+      let targetText;
+      let surroundingText;
+      if (note.resolution.status === "resolved") {
+        const el = note.resolution.element;
+        targetText = (el.textContent || "").trim().slice(0, MAX_TARGET_CHARS);
+        const around = [el.previousElementSibling, el.nextElementSibling].filter(Boolean).map((sib) => (sib.textContent || "").trim()).join(" \u2026 ");
+        surroundingText = around.slice(0, MAX_SURROUNDING_CHARS) || void 0;
+      } else {
+        targetText = note.annotation.anchor.textQuote?.exact;
+      }
+      return { page, annotation: note.annotation, targetText, surroundingText };
+    }
+    function describeContext(context) {
+      const parts = ["page title + URL"];
+      if (context.pageText) parts.push(`${(context.pageText.length / 1e3).toFixed(1)}k chars of page text`);
+      if (context.targetText) parts.push(`${context.targetText.length} chars of the annotated block`);
+      if (context.surroundingText) parts.push("nearby text");
+      if (context.annotation) parts.push("this note");
+      if (context.pageAnnotations) parts.push(`${context.pageAnnotations.length} note(s)`);
+      return `Will send: ${parts.join(", ")}.`;
+    }
+    function renderMessages() {
+      if (!mounted) return;
+      mounted.log.textContent = "";
+      if (!transcript.length) {
+        const empty = document.createElement("div");
+        empty.className = "wm-chat-empty";
+        empty.textContent = "Ask about this page, a note, or all notes. Nothing is sent until you press Send.";
+        mounted.log.appendChild(empty);
+        return;
+      }
+      for (const message of transcript) {
+        const el = document.createElement("div");
+        el.className = `wm-chat-msg wm-chat-${message.role}`;
+        if (message.role === "user") el.textContent = message.content;
+        else el.innerHTML = renderMarkdown(message.content);
+        mounted.log.appendChild(el);
+      }
+      mounted.log.scrollTop = mounted.log.scrollHeight;
+    }
+    function refreshNoteOptions() {
+      if (!mounted || !ctx) return;
+      const notes = ctx.getNotes();
+      const previous = mounted.noteSelect.value;
+      mounted.noteSelect.textContent = "";
+      for (const note of notes) {
+        const option = document.createElement("option");
+        option.value = note.annotation.id;
+        option.textContent = note.annotation.body.text.slice(0, 40) || "(empty note)";
+        mounted.noteSelect.appendChild(option);
+      }
+      if (previous && notes.some((n) => n.annotation.id === previous)) mounted.noteSelect.value = previous;
+      mounted.noteSelect.style.display = mounted.scope.value === "note" && notes.length ? "block" : "none";
+      if (mounted.scope.value === "note" && !notes.length) {
+        mounted.preview.textContent = "No notes on this page yet.";
+      }
+    }
+    function refreshPreview() {
+      if (!mounted) return;
+      refreshNoteOptions();
+      try {
+        const scope = mounted.scope.value;
+        const context = buildContext(scope, mounted.noteSelect.value || void 0);
+        mounted.preview.textContent = describeContext(context);
+      } catch {
+        mounted.preview.textContent = "";
+      }
+    }
+    function setBusy(busy) {
+      if (!mounted) return;
+      mounted.send.textContent = busy ? "Stop" : "Send";
+      mounted.textarea.disabled = busy;
+    }
+    async function ask(scope, question, noteId) {
+      const text = question.trim();
+      if (!text) return "";
+      const context = buildContext(scope, noteId);
+      transcript = [...transcript, { role: "user", content: text }];
+      renderMessages();
+      const controller = new AbortController();
+      inFlight = controller;
+      setBusy(true);
+      if (mounted) mounted.error.textContent = "";
+      try {
+        const result = options.provider.send({ messages: transcript, context, signal: controller.signal });
+        if (isAsyncIterable(result)) {
+          let content = "";
+          transcript = [...transcript, { role: "assistant", content }];
+          let lastPaint = 0;
+          for await (const chunk of result) {
+            content += chunk.delta;
+            transcript[transcript.length - 1] = { role: "assistant", content };
+            const now = Date.now();
+            if (now - lastPaint > 100) {
+              lastPaint = now;
+              renderMessages();
+            }
+          }
+          renderMessages();
+          return content;
+        }
+        const response = await result;
+        transcript = [...transcript, { role: "assistant", content: response.content }];
+        renderMessages();
+        return response.content;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (mounted) mounted.error.textContent = message;
+        throw err;
+      } finally {
+        if (inFlight === controller) inFlight = null;
+        setBusy(false);
+      }
+    }
+    const plugin = {
+      name: "chat",
+      setup(pluginCtx) {
+        ctx = pluginCtx;
+        cleanups.push(
+          pluginCtx.addSidebarTab({
+            id: "chat",
+            label: "Chat",
+            render(container) {
+              const style = document.createElement("style");
+              style.textContent = CSS3;
+              container.appendChild(style);
+              const root = document.createElement("div");
+              root.className = "wm-chat";
+              const scopeWrap = document.createElement("div");
+              scopeWrap.className = "wm-chat-scope";
+              const scope = document.createElement("select");
+              scope.setAttribute("aria-label", "Context to send");
+              for (const [value, label] of [
+                ["page", "This page"],
+                ["all-notes", "All notes on this page"],
+                ["note", "A single note\u2026"]
+              ]) {
+                const option = document.createElement("option");
+                option.value = value;
+                option.textContent = label;
+                scope.appendChild(option);
+              }
+              const noteSelect = document.createElement("select");
+              noteSelect.setAttribute("aria-label", "Note");
+              noteSelect.style.display = "none";
+              const preview = document.createElement("div");
+              preview.className = "wm-chat-preview";
+              scopeWrap.append(scope, noteSelect, preview);
+              const log = document.createElement("div");
+              log.className = "wm-chat-log";
+              const error = document.createElement("div");
+              error.className = "wm-chat-error";
+              const inputWrap = document.createElement("div");
+              inputWrap.className = "wm-chat-input";
+              const textarea = document.createElement("textarea");
+              textarea.placeholder = "Ask a question\u2026";
+              textarea.setAttribute("aria-label", "Your question");
+              const row = document.createElement("div");
+              row.className = "wm-chat-row";
+              const hint = document.createElement("span");
+              hint.className = "wm-chat-hint";
+              hint.textContent = `via ${options.provider.name}`;
+              const send = document.createElement("button");
+              send.type = "button";
+              send.className = "wm-chat-send";
+              send.textContent = "Send";
+              row.append(hint, send);
+              inputWrap.append(textarea, row);
+              root.append(scopeWrap, log, error, inputWrap);
+              container.appendChild(root);
+              mounted = { log, error, scope, noteSelect, preview, textarea, send };
+              renderMessages();
+              refreshPreview();
+              const submit = () => {
+                if (inFlight) {
+                  inFlight.abort();
+                  return;
+                }
+                const question = textarea.value;
+                if (!question.trim()) return;
+                textarea.value = "";
+                void ask(scope.value, question, noteSelect.value || void 0).catch(() => {
+                });
+              };
+              send.addEventListener("click", submit);
+              textarea.addEventListener("keydown", (e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  submit();
+                }
+              });
+              scope.addEventListener("change", refreshPreview);
+              noteSelect.addEventListener("change", refreshPreview);
+              return () => {
+                mounted = null;
+              };
+            }
+          })
+        );
+        cleanups.push(
+          pluginCtx.addNoteAction({
+            id: "chat-note",
+            label: "Ask AI",
+            onClick: (annotation) => {
+              pluginCtx.activateSidebarTab("chat");
+              if (mounted) {
+                mounted.scope.value = "note";
+                refreshNoteOptions();
+                mounted.noteSelect.value = annotation.id;
+                refreshPreview();
+                mounted.textarea.focus();
+              }
+            }
+          })
+        );
+        cleanups.push(
+          pluginCtx.commands.register("chat.ask", (arg) => {
+            const { scope = "page", question = "", noteId } = arg ?? {};
+            return ask(scope, question, noteId);
+          })
+        );
+        cleanups.push(pluginCtx.on("note:save", () => refreshNoteOptions()));
+        cleanups.push(pluginCtx.on("note:delete", () => refreshNoteOptions()));
+      },
+      destroy() {
+        inFlight?.abort();
+        inFlight = null;
+        for (const off of cleanups.splice(0)) off();
+        mounted = null;
+        transcript = [];
+        ctx = null;
+      },
+      ask,
+      buildContext,
+      getTranscript: () => transcript.slice(),
+      clearTranscript() {
+        transcript = [];
+        renderMessages();
+      }
+    };
+    return plugin;
+  }
+
   // src/plugins/excalidraw.ts
   function isExcalidrawAttachment(att) {
     return att.type === "excalidraw";
@@ -2254,6 +2559,131 @@ button.wm-btn.wm-danger { color: #d1242f; }
     return plugin;
   }
 
+  // src/providers/claude.ts
+  var DEFAULT_MODEL = "claude-opus-5";
+  var DEFAULT_MAX_TOKENS = 8192;
+  var DEFAULT_EFFORT = "medium";
+  var DEFAULT_ENDPOINT = "https://api.anthropic.com/v1/messages";
+  var API_VERSION = "2023-06-01";
+  var SYSTEM_PREAMBLE = "You are helping a user understand and annotate a web page. Answer from the page context below when it is relevant, and say so plainly when it is not. Be concise: lead with the answer, then supporting detail.";
+  function buildSystemPrompt(context) {
+    const parts = [SYSTEM_PREAMBLE, "", "# Page", `Title: ${context.page.title ?? "(untitled)"}`, `URL: ${context.page.normalizedUrl}`];
+    if (context.targetText) {
+      parts.push("", "# Annotated block", "```", context.targetText, "```");
+    }
+    if (context.surroundingText) {
+      parts.push("", "# Nearby text", "```", context.surroundingText, "```");
+    }
+    if (context.annotation) {
+      parts.push("", "# The user's note on that block", "```", context.annotation.body.text, "```");
+    }
+    if (context.pageAnnotations?.length) {
+      parts.push("", `# All ${context.pageAnnotations.length} note(s) on this page`);
+      context.pageAnnotations.forEach((a, i) => {
+        const quote = a.anchor.textQuote?.exact;
+        parts.push("", `## Note ${i + 1}`);
+        if (quote) parts.push(`Anchored to: ${quote.slice(0, 200)}`);
+        parts.push("```", a.body.text, "```");
+      });
+    }
+    if (context.pageText) {
+      parts.push("", "# Page text", "```", context.pageText, "```");
+    }
+    return parts.join("\n");
+  }
+  async function* parseSSE(body) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for (; ; ) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let sep;
+        while ((sep = buffer.indexOf("\n\n")) !== -1) {
+          const raw = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          for (const line of raw.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload || payload === "[DONE]") continue;
+            try {
+              yield JSON.parse(payload);
+            } catch {
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  async function describeError(response) {
+    let detail = "";
+    try {
+      const text = await response.text();
+      try {
+        const parsed = JSON.parse(text);
+        detail = parsed?.error?.message ?? text;
+      } catch {
+        detail = text;
+      }
+    } catch {
+    }
+    return `Claude API ${response.status}${detail ? `: ${detail.slice(0, 400)}` : ""}`;
+  }
+  function createClaudeProvider(options) {
+    const {
+      apiKey,
+      model = DEFAULT_MODEL,
+      maxTokens = DEFAULT_MAX_TOKENS,
+      effort = DEFAULT_EFFORT,
+      endpoint = DEFAULT_ENDPOINT,
+      fetchFn
+    } = options;
+    return {
+      name: model,
+      send(request) {
+        const doFetch = fetchFn ?? globalThis.fetch.bind(globalThis);
+        const body = {
+          model,
+          max_tokens: maxTokens,
+          stream: true,
+          system: buildSystemPrompt(request.context),
+          output_config: { effort },
+          messages: request.messages.map((m) => ({ role: m.role, content: m.content }))
+        };
+        async function* stream() {
+          const response = await doFetch(endpoint, {
+            method: "POST",
+            signal: request.signal,
+            headers: {
+              "content-type": "application/json",
+              "x-api-key": apiKey,
+              "anthropic-version": API_VERSION,
+              // Required for calls made straight from a browser page.
+              "anthropic-dangerous-direct-browser-access": "true"
+            },
+            body: JSON.stringify(body)
+          });
+          if (!response.ok) throw new Error(await describeError(response));
+          if (!response.body) throw new Error("Claude API returned no response body");
+          for await (const event of parseSSE(response.body)) {
+            if (event.type === "error") {
+              throw new Error(`Claude API error: ${event.error?.message ?? "unknown"}`);
+            }
+            if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
+              yield { delta: event.delta.text };
+            }
+            if (event.type === "message_stop") return;
+          }
+        }
+        return stream();
+      }
+    };
+  }
+
   // src/userscript.ts
   function download(filename, text, type) {
     const blob = new Blob([text], { type });
@@ -2280,13 +2710,20 @@ button.wm-btn.wm-danger { color: #d1242f; }
       input.click();
     });
   }
+  var CHAT_KEY_SETTING = "chat.apiKey";
+  var CHAT_MODEL_SETTING = "chat.model";
   function startUserscript() {
-    const annotator = createAnnotator({
-      storage: createTampermonkeyStorage()
-    });
+    const storage = createTampermonkeyStorage();
+    const annotator = createAnnotator({ storage });
     const portable = createPortableDataPlugin();
     annotator.use(portable);
     annotator.use(createExcalidrawPlugin());
+    void (async () => {
+      const apiKey = await storage.getSetting(CHAT_KEY_SETTING);
+      if (!apiKey) return;
+      const model = await storage.getSetting(CHAT_MODEL_SETTING);
+      annotator.use(createChatPlugin({ provider: createClaudeProvider({ apiKey, model }) }));
+    })();
     if (typeof GM_registerMenuCommand === "function") {
       GM_registerMenuCommand("Toggle annotate mode (Alt+Shift+A)", () => annotator.toggle());
       GM_registerMenuCommand("Toggle notes sidebar", () => annotator.toggleSidebar());
@@ -2297,6 +2734,20 @@ button.wm-btn.wm-danger { color: #d1242f; }
       GM_registerMenuCommand("Export annotations (Markdown)", async () => {
         const md = await portable.exportMarkdown();
         download(`webmods-annotations-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.md`, md, "text/markdown");
+      });
+      GM_registerMenuCommand("Configure AI chat\u2026", async () => {
+        const current = await storage.getSetting(CHAT_KEY_SETTING);
+        const key = prompt(
+          "Anthropic API key (stored in Tampermonkey storage only, never exported). Leave blank to disable AI chat.",
+          current ?? ""
+        );
+        if (key === null) return;
+        await storage.setSetting?.(CHAT_KEY_SETTING, key.trim());
+        if (key.trim()) {
+          const model = prompt("Model (blank for the default, claude-opus-5):", "");
+          if (model !== null) await storage.setSetting?.(CHAT_MODEL_SETTING, model.trim() || void 0);
+        }
+        alert("Saved. Reload the page to apply.");
       });
       GM_registerMenuCommand("Import annotations (JSON)", async () => {
         const text = await pickFile("application/json,.json");

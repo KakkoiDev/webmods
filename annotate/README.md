@@ -52,6 +52,7 @@ Browser global:
 - `src/ui.ts` — shadow-DOM UI (hover highlight, gutter markers, composer, sidebar with plugin tabs); overlays are `position: fixed` against element rects, never in-flow
 - `src/markdown.ts` — tiny renderer that HTML-escapes everything before applying markup (imported annotations can't inject markup)
 - `src/plugins/portable-data.ts` — `exportJSON` / `importJSON` (skip/replace/merge/duplicate, default non-destructive skip), `exportMarkdown`, size-capped inline `#wm=` URLs
+- `src/plugins/chat.ts` + `src/providers/claude.ts` — optional AI conversation pane. The plugin adds a Chat sidebar tab and an "Ask AI" note action, assembles a structured context per scope (this page / all notes / one note, each size-capped) and always shows the user what will be sent; nothing leaves the browser until Send is pressed. Providers are pluggable (`ChatProvider`); the bundled Claude provider streams SSE from the Messages API browser-side. No core module imports either file
 - `src/plugins/excalidraw.ts` — optional whiteboards attached to notes. Lazy-loads Excalidraw (+React) from esm.sh only when a board is first opened, so it adds no weight otherwise; stores the full editable scene as an `excalidraw` attachment (rides along in JSON export) plus a size-capped SVG preview shown on the sidebar card. Adds an "Add board"/"Open board" note action and the `note.open-board` command. A custom `loader` option can replace the CDN (e.g. for CSP-strict sites)
 
 ## Reference userscript
