@@ -78,6 +78,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
   cursor: pointer; background: #fff;
 }
 .wm-note:hover { border-color: #6366f1; }
+.wm-note-focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3); transition: box-shadow 300ms; }
 .wm-note:focus-visible { outline: 2px solid #6366f1; }
 .wm-note-context {
   font-size: 11.5px; color: #57606a; border-left: 3px solid #d0d7de; padding-left: 6px;
@@ -254,11 +255,11 @@ export class AnnotatorUI {
         marker.className = "wm-marker";
         marker.type = "button";
         marker.textContent = String(index);
-        marker.setAttribute("aria-label", `Annotation ${index}: open note`);
+        marker.setAttribute("aria-label", `Annotation ${index}: show note in sidebar`);
         marker.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
-          this.noteCallbacks.onEdit(note.annotation.id);
+          this.focusNote(note.annotation.id);
         });
         this.layer.appendChild(marker);
         this.markers.set(note.annotation.id, { el: marker, target: note.resolution.element });
@@ -393,6 +394,18 @@ export class AnnotatorUI {
     this.sidebar.classList.remove("wm-open");
   }
 
+  /** Open the sidebar on the Notes tab with one note's card scrolled into view and emphasized. */
+  focusNote(id: string): void {
+    this.activeTab = "notes";
+    this.openSidebar();
+    const card = this.sidebarBody.querySelector(`.wm-note[data-note-id="${id}"]`);
+    if (!(card instanceof HTMLElement)) return;
+    card.scrollIntoView?.({ block: "nearest" });
+    card.classList.add("wm-note-focus");
+    card.focus?.({ preventScroll: true });
+    setTimeout(() => card.classList.remove("wm-note-focus"), 1800);
+  }
+
   addNoteAction(action: NoteAction): () => void {
     this.noteActions.push(action);
     this.renderNotesTab();
@@ -470,6 +483,7 @@ export class AnnotatorUI {
     for (const note of this.notes) {
       const card = this.doc.createElement("div");
       card.className = "wm-note";
+      card.dataset.noteId = note.annotation.id;
       card.tabIndex = 0;
       card.setAttribute("role", "button");
       card.setAttribute("aria-label", "Go to annotation");

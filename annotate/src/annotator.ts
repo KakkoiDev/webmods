@@ -275,7 +275,7 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
       const annotation = await storage.get(noteId);
       if (!annotation) return;
       await refresh();
-      if (uiOptions.sidebar) ui.openSidebar();
+      if (uiOptions.sidebar) ui.focusNote(noteId);
       await scrollToNote(noteId);
     } catch (err) {
       fail(err, "note-fragment");
