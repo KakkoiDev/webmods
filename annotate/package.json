@@ -1,0 +1,33 @@
+{
+  "name": "@webmods/annotate",
+  "version": "0.1.0",
+  "description": "Framework-agnostic library for annotating arbitrary web pages with Markdown notes, robust anchors, and pluggable storage",
+  "license": "MIT",
+  "author": "KakkoiDev",
+  "type": "module",
+  "main": "dist/annotate.js",
+  "module": "dist/annotate.esm.js",
+  "types": "dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/annotate.esm.js",
+      "default": "./dist/annotate.js"
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "jsdom": "^25.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "allowScripts": {
+    "esbuild@0.24.2": true,
+    "esbuild@0.21.5": true
+  }
+}
