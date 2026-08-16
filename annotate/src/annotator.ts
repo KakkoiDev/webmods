@@ -317,6 +317,7 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
       commands,
       on: (event, handler) => emitter.on(event, handler),
       addSidebarTab: (tab) => ui.addTab(tab),
+      addNoteAction: (action) => ui.addNoteAction(action),
       getPage: () => page,
       getNotes: () => resolved.slice(),
       scrollToNote,

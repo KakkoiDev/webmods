@@ -151,12 +151,20 @@ export interface SidebarTab {
   render(container: HTMLElement): void | (() => void);
 }
 
+/** Action button plugins can add to every note card in the sidebar. */
+export interface NoteAction {
+  id: string;
+  label: string | ((annotation: Annotation) => string);
+  onClick(annotation: Annotation): void;
+}
+
 export interface PluginContext {
   annotator: Annotator;
   storage: AnnotationStorage;
   commands: CommandRegistry;
   on<E extends EventName>(event: E, handler: EventHandler<E>): () => void;
   addSidebarTab(tab: SidebarTab): () => void;
+  addNoteAction(action: NoteAction): () => void;
   getPage(): PageIdentity;
   getNotes(): ResolvedNote[];
   scrollToNote(id: string): Promise<boolean>;

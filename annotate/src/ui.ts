@@ -1,6 +1,6 @@
 import { UI_ATTR } from "./blocks";
 import { renderMarkdown } from "./markdown";
-import type { ResolvedNote, SidebarTab } from "./types";
+import type { NoteAction, ResolvedNote, SidebarTab } from "./types";
 
 const CSS = `
 :host { all: initial; }
@@ -91,7 +91,11 @@ button.wm-btn.wm-danger { color: #d1242f; }
 .wm-note-body code { background: #f6f8fa; padding: 1px 4px; border-radius: 4px; font-size: 12px; }
 .wm-note-body blockquote { color: #57606a; border-left: 3px solid #d0d7de; padding-left: 8px; }
 .wm-note-body a { color: #4f46e5; }
-.wm-note-actions { display: flex; gap: 4px; margin-top: 6px; }
+.wm-note-actions { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.wm-note-preview {
+  display: block; max-width: 100%; max-height: 140px; margin-top: 6px;
+  border: 1px solid #d0d7de; border-radius: 6px; background: #fff;
+}
 .wm-note-actions button { font-size: 11.5px; padding: 3px 8px; }
 .wm-badge {
   display: inline-block; font-size: 10.5px; font-weight: 600; border-radius: 999px; padding: 1px 7px; margin-left: 6px;
@@ -137,6 +141,7 @@ export class AnnotatorUI {
   private markers = new Map<string, { el: HTMLElement; target: Element }>();
   private hoverTarget: Element | null = null;
   private tabs: SidebarTab[] = [{ id: "notes", label: "Notes", render: () => {} }];
+  private noteActions: NoteAction[] = [];
   private activeTab = "notes";
   private tabCleanup: (() => void) | null = null;
   private notes: ResolvedNote[] = [];
@@ -388,6 +393,15 @@ export class AnnotatorUI {
     this.sidebar.classList.remove("wm-open");
   }
 
+  addNoteAction(action: NoteAction): () => void {
+    this.noteActions.push(action);
+    this.renderNotesTab();
+    return () => {
+      this.noteActions = this.noteActions.filter((a) => a !== action);
+      this.renderNotesTab();
+    };
+  }
+
   addTab(tab: SidebarTab): () => void {
     this.tabs.push(tab);
     if (this.isSidebarOpen()) this.renderTabs();
@@ -483,6 +497,18 @@ export class AnnotatorUI {
       body.innerHTML = renderMarkdown(note.annotation.body.text); // renderMarkdown escapes all input
       card.appendChild(body);
 
+      // Attachment previews (SVG strings rendered via <img>, so they can never execute script).
+      for (const att of note.annotation.attachments ?? []) {
+        const preview = (att as { preview?: unknown }).preview;
+        if (typeof preview === "string" && preview.trimStart().startsWith("<svg")) {
+          const img = this.doc.createElement("img");
+          img.className = "wm-note-preview";
+          img.alt = `${att.type} attachment preview`;
+          img.src = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(preview)))}`;
+          card.appendChild(img);
+        }
+      }
+
       const actions = this.doc.createElement("div");
       actions.className = "wm-note-actions";
       const id = note.annotation.id;
@@ -490,6 +516,10 @@ export class AnnotatorUI {
         actions.appendChild(this.makeButton("Edit", "wm-btn", () => this.noteCallbacks.onEdit(id)));
       }
       actions.appendChild(this.makeButton("Copy link", "wm-btn", () => this.noteCallbacks.onCopyLink(id)));
+      for (const action of this.noteActions) {
+        const label = typeof action.label === "function" ? action.label(note.annotation) : action.label;
+        actions.appendChild(this.makeButton(label, "wm-btn", () => action.onClick(note.annotation)));
+      }
       actions.appendChild(this.makeButton("Delete", "wm-btn wm-danger", () => this.noteCallbacks.onDelete(id)));
       card.appendChild(actions);
 

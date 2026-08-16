@@ -4,6 +4,7 @@
  * All annotation logic lives in the library.
  */
 import { createAnnotator } from "./annotator";
+import { createExcalidrawPlugin } from "./plugins/excalidraw";
 import { createPortableDataPlugin } from "./plugins/portable-data";
 import { createTampermonkeyStorage } from "./storage";
 
@@ -43,6 +44,8 @@ export function startUserscript(): void {
 
   const portable = createPortableDataPlugin();
   annotator.use(portable);
+  // Lazy: Excalidraw only loads (from esm.sh) the first time a board is opened.
+  annotator.use(createExcalidrawPlugin());
 
   if (typeof GM_registerMenuCommand === "function") {
     GM_registerMenuCommand("Toggle annotate mode (Alt+Shift+A)", () => annotator.toggle());

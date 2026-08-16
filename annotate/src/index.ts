@@ -9,6 +9,8 @@ export {
   migrateDB,
 } from "./storage";
 export { createPortableDataPlugin, validateAnnotation, validateExportDocument } from "./plugins/portable-data";
+export { createExcalidrawPlugin, isExcalidrawAttachment } from "./plugins/excalidraw";
+export type { ExcalidrawAttachment, ExcalidrawScene, ExcalidrawPlugin, ExcalidrawLoader } from "./plugins/excalidraw";
 export { createDefaultPageIdentityResolver, normalizeUrl, stripOwnFragment, hashString } from "./page-identity";
 export { createDefaultBlockResolver, scoreBlock, buildExcludeFn } from "./blocks";
 export { createAnchor, resolveAnchor, buildSelector, buildXPath, textSimilarity, normalizeText } from "./anchors";

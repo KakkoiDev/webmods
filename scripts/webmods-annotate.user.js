@@ -798,7 +798,11 @@ button.wm-btn.wm-danger { color: #d1242f; }
 .wm-note-body code { background: #f6f8fa; padding: 1px 4px; border-radius: 4px; font-size: 12px; }
 .wm-note-body blockquote { color: #57606a; border-left: 3px solid #d0d7de; padding-left: 8px; }
 .wm-note-body a { color: #4f46e5; }
-.wm-note-actions { display: flex; gap: 4px; margin-top: 6px; }
+.wm-note-actions { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.wm-note-preview {
+  display: block; max-width: 100%; max-height: 140px; margin-top: 6px;
+  border: 1px solid #d0d7de; border-radius: 6px; background: #fff;
+}
 .wm-note-actions button { font-size: 11.5px; padding: 3px 8px; }
 .wm-badge {
   display: inline-block; font-size: 10.5px; font-weight: 600; border-radius: 999px; padding: 1px 7px; margin-left: 6px;
@@ -821,6 +825,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
       this.hoverTarget = null;
       this.tabs = [{ id: "notes", label: "Notes", render: () => {
       } }];
+      this.noteActions = [];
       this.activeTab = "notes";
       this.tabCleanup = null;
       this.notes = [];
@@ -1033,6 +1038,14 @@ button.wm-btn.wm-danger { color: #d1242f; }
     closeSidebar() {
       this.sidebar.classList.remove("wm-open");
     }
+    addNoteAction(action) {
+      this.noteActions.push(action);
+      this.renderNotesTab();
+      return () => {
+        this.noteActions = this.noteActions.filter((a) => a !== action);
+        this.renderNotesTab();
+      };
+    }
     addTab(tab) {
       this.tabs.push(tab);
       if (this.isSidebarOpen()) this.renderTabs();
@@ -1119,6 +1132,16 @@ button.wm-btn.wm-danger { color: #d1242f; }
         body.className = "wm-note-body";
         body.innerHTML = renderMarkdown(note.annotation.body.text);
         card.appendChild(body);
+        for (const att of note.annotation.attachments ?? []) {
+          const preview = att.preview;
+          if (typeof preview === "string" && preview.trimStart().startsWith("<svg")) {
+            const img = this.doc.createElement("img");
+            img.className = "wm-note-preview";
+            img.alt = `${att.type} attachment preview`;
+            img.src = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(preview)))}`;
+            card.appendChild(img);
+          }
+        }
         const actions = this.doc.createElement("div");
         actions.className = "wm-note-actions";
         const id = note.annotation.id;
@@ -1126,6 +1149,10 @@ button.wm-btn.wm-danger { color: #d1242f; }
           actions.appendChild(this.makeButton("Edit", "wm-btn", () => this.noteCallbacks.onEdit(id)));
         }
         actions.appendChild(this.makeButton("Copy link", "wm-btn", () => this.noteCallbacks.onCopyLink(id)));
+        for (const action of this.noteActions) {
+          const label = typeof action.label === "function" ? action.label(note.annotation) : action.label;
+          actions.appendChild(this.makeButton(label, "wm-btn", () => action.onClick(note.annotation)));
+        }
         actions.appendChild(this.makeButton("Delete", "wm-btn wm-danger", () => this.noteCallbacks.onDelete(id)));
         card.appendChild(actions);
         const navigate = () => {
@@ -1397,6 +1424,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
         commands,
         on: (event, handler) => emitter.on(event, handler),
         addSidebarTab: (tab) => ui.addTab(tab),
+        addNoteAction: (action) => ui.addNoteAction(action),
         getPage: () => page,
         getNotes: () => resolved.slice(),
         scrollToNote
@@ -1450,6 +1478,169 @@ button.wm-btn.wm-danger { color: #d1242f; }
     };
     void refresh().then(handleNoteFragment);
     return api;
+  }
+
+  // src/plugins/excalidraw.ts
+  function isExcalidrawAttachment(att) {
+    return att.type === "excalidraw";
+  }
+  var DEFAULT_VERSIONS = { excalidraw: "0.18.0", react: "18.3.1" };
+  var PREVIEW_MAX_CHARS = 8e4;
+  var dynamicImport = new Function("u", "return import(u)");
+  function createDefaultLoader(versions) {
+    return async () => {
+      const base = `https://esm.sh/@excalidraw/excalidraw@${versions.excalidraw}`;
+      const g = globalThis;
+      g.EXCALIDRAW_ASSET_PATH ?? (g.EXCALIDRAW_ASSET_PATH = `${base}/dist/prod/`);
+      const cssHref = `${base}/dist/prod/index.css`;
+      if (!document.querySelector(`link[href="${cssHref}"]`)) {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = cssHref;
+        document.head.appendChild(link);
+      }
+      const deps = `react@${versions.react},react-dom@${versions.react}`;
+      const [React, ReactDOMClient, excalidraw] = await Promise.all([
+        dynamicImport(`https://esm.sh/react@${versions.react}`),
+        dynamicImport(`https://esm.sh/react-dom@${versions.react}/client`),
+        dynamicImport(`${base}?deps=${deps}`)
+      ]);
+      return { React, createRoot: ReactDOMClient.createRoot, excalidraw };
+    };
+  }
+  function createExcalidrawPlugin(options = {}) {
+    const versions = { ...DEFAULT_VERSIONS, ...options.versions };
+    const loader = options.loader ?? createDefaultLoader(versions);
+    const previewMaxChars = options.previewMaxChars ?? PREVIEW_MAX_CHARS;
+    let ctx = null;
+    let runtimePromise = null;
+    let modal = null;
+    let root = null;
+    const cleanups = [];
+    const loadRuntime = () => runtimePromise ?? (runtimePromise = loader());
+    function close() {
+      root?.unmount();
+      root = null;
+      modal?.remove();
+      modal = null;
+    }
+    async function open(annotationId) {
+      if (!ctx) throw new Error("excalidraw plugin is not attached to an annotator");
+      const annotation = await ctx.annotator.getNote(annotationId);
+      if (!annotation) throw new Error(`Annotation not found: ${annotationId}`);
+      const existing = (annotation.attachments ?? []).find(isExcalidrawAttachment);
+      const runtime = await loadRuntime();
+      close();
+      const doc = document;
+      modal = doc.createElement("div");
+      modal.setAttribute(UI_ATTR, "");
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-label", "Whiteboard");
+      modal.style.cssText = "position:fixed;inset:0;z-index:2147483200;background:rgba(15,17,20,0.55);display:flex;align-items:center;justify-content:center;";
+      const panel = doc.createElement("div");
+      panel.style.cssText = "width:min(1100px,94vw);height:min(720px,90vh);background:#fff;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,0.4);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;";
+      const bar = doc.createElement("div");
+      bar.style.cssText = "display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #d0d7de;background:#f6f8fa;";
+      const title = doc.createElement("strong");
+      title.textContent = "Whiteboard";
+      title.style.cssText = "font-size:13px;flex:1;";
+      bar.appendChild(title);
+      const mkBtn = (label, primary, onClick) => {
+        const btn = doc.createElement("button");
+        btn.type = "button";
+        btn.textContent = label;
+        btn.style.cssText = `font-size:12.5px;padding:5px 14px;border-radius:6px;cursor:pointer;border:1px solid ${primary ? "#6366f1" : "#d0d7de"};background:${primary ? "#6366f1" : "#fff"};color:${primary ? "#fff" : "#1f2328"};`;
+        btn.addEventListener("click", onClick);
+        return btn;
+      };
+      const canvasHost = doc.createElement("div");
+      canvasHost.style.cssText = "flex:1;min-height:0;";
+      let api = null;
+      const save = async () => {
+        if (!api || !ctx) return;
+        try {
+          const elements = api.getSceneElements();
+          const appState = api.getAppState();
+          const files = typeof api.getFiles === "function" ? api.getFiles() : {};
+          const scene = {
+            elements,
+            // Persist only the durable bits of appState; viewport/tool state is noise.
+            appState: {
+              viewBackgroundColor: appState?.viewBackgroundColor,
+              gridSize: appState?.gridSize ?? null
+            },
+            files
+          };
+          let preview = existing?.preview;
+          try {
+            if (runtime.excalidraw.exportToSvg && elements.length) {
+              const svg = await runtime.excalidraw.exportToSvg({ elements, appState: scene.appState, files });
+              const markup = svg.outerHTML;
+              preview = markup.length <= previewMaxChars ? markup : void 0;
+            }
+          } catch {
+          }
+          const attachment = {
+            id: existing?.id ?? generateId(),
+            type: "excalidraw",
+            scene,
+            preview
+          };
+          const others = (annotation.attachments ?? []).filter((a) => a.id !== attachment.id);
+          await ctx.annotator.updateNote(annotation.id, { attachments: [...others, attachment] });
+          close();
+        } catch (err) {
+          console.error("[webmods-annotate] failed to save whiteboard", err);
+        }
+      };
+      bar.appendChild(mkBtn("Cancel", false, close));
+      bar.appendChild(mkBtn("Save", true, () => void save()));
+      panel.appendChild(bar);
+      panel.appendChild(canvasHost);
+      modal.appendChild(panel);
+      modal.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          close();
+        }
+      });
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) close();
+      });
+      doc.documentElement.appendChild(modal);
+      const { React, createRoot } = runtime;
+      root = createRoot(canvasHost);
+      root.render(
+        React.createElement(runtime.excalidraw.Excalidraw, {
+          initialData: existing ? { elements: existing.scene.elements, files: existing.scene.files } : void 0,
+          excalidrawAPI: (a) => {
+            api = a;
+          }
+        })
+      );
+    }
+    return {
+      name: "excalidraw",
+      setup(pluginCtx) {
+        ctx = pluginCtx;
+        cleanups.push(
+          pluginCtx.addNoteAction({
+            id: "excalidraw-board",
+            label: (a) => (a.attachments ?? []).some(isExcalidrawAttachment) ? "Open board" : "Add board",
+            onClick: (a) => void open(a.id).catch((err) => console.error("[webmods-annotate] whiteboard failed to open", err))
+          })
+        );
+        cleanups.push(pluginCtx.commands.register("note.open-board", (id) => open(String(id))));
+      },
+      destroy() {
+        close();
+        for (const off of cleanups.splice(0)) off();
+        ctx = null;
+      },
+      open,
+      isOpen: () => !!modal,
+      close
+    };
   }
 
   // src/plugins/portable-data.ts
@@ -1660,6 +1851,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     });
     const portable = createPortableDataPlugin();
     annotator.use(portable);
+    annotator.use(createExcalidrawPlugin());
     if (typeof GM_registerMenuCommand === "function") {
       GM_registerMenuCommand("Toggle annotate mode (Alt+Shift+A)", () => annotator.toggle());
       GM_registerMenuCommand("Toggle notes sidebar", () => annotator.toggleSidebar());
