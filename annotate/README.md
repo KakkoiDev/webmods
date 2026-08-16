@@ -4,7 +4,7 @@ Framework-agnostic TypeScript library for annotating arbitrary web pages: Markdo
 
 Spec: [docs/webmods-annotate-spec.md](../docs/webmods-annotate-spec.md). This implements the spec's initial recommended scope (§36): core + robust block anchors + Tampermonkey shared storage + Markdown notes + notes sidebar + note anchor links + JSON import/export + minified one-import build.
 
-Configuring the optional AI Chat tab needs an Anthropic API key — where to find it (it is workspace-scoped, and the obvious Console page refuses you) is documented in [docs/ANTHROPIC-API-KEY.md](../docs/ANTHROPIC-API-KEY.md).
+The optional AI Chat tab needs a key from either provider. Anthropic keys are workspace-scoped and the obvious Console page refuses non-admins — see [docs/ANTHROPIC-API-KEY.md](../docs/ANTHROPIC-API-KEY.md). An OpenAI (or OpenAI-compatible) key is the self-serve alternative; pick the provider in the *Configure AI chat…* menu command.
 
 ## Roadmap
 
@@ -55,7 +55,7 @@ Browser global:
 - `src/markdown.ts` — tiny renderer that HTML-escapes everything before applying markup (imported annotations can't inject markup)
 - `src/plugins/portable-data.ts` — `exportJSON` / `importJSON` (skip/replace/merge/duplicate, default non-destructive skip), `exportMarkdown`, size-capped inline `#wm=` URLs
 - `src/plugins/global-browser.ts` — "All pages" sidebar tab: live search across every stored annotation (AND-ed tokens over note body, anchored quote, URL and title, plus a `site:` filter), collapsible per-page groups with counts, per-page JSON export, and click-through that scrolls to same-page notes or opens another page on its `#wm-note=` link. Adapters without `listAll`/`listPages` degrade to a message
-- `src/plugins/chat.ts` + `src/providers/claude.ts` — optional AI conversation pane. The plugin adds a Chat sidebar tab and an "Ask AI" note action, assembles a structured context per scope (this page / all notes / one note, each size-capped) and always shows the user what will be sent; nothing leaves the browser until Send is pressed. Providers are pluggable (`ChatProvider`); the bundled Claude provider streams SSE from the Messages API browser-side. No core module imports either file
+- `src/plugins/chat.ts` + `src/providers/{claude,openai}.ts` — optional AI conversation pane. The plugin adds a Chat sidebar tab and an "Ask AI" note action, assembles a structured context per scope (this page / all notes / one note, each size-capped) and always shows the user what will be sent; nothing leaves the browser until Send is pressed. Providers are pluggable (`ChatProvider`); two ship in the box — Claude (Messages API) and a generic OpenAI-compatible one whose `baseURL` also covers OpenRouter, Groq, Together and local Ollama. Both stream SSE browser-side and share `providers/sse.ts` + `providers/context-prompt.ts`. No core module imports any of them
 - `src/plugins/excalidraw.ts` — optional whiteboards attached to notes. Lazy-loads Excalidraw (+React) from esm.sh only when a board is first opened, so it adds no weight otherwise; stores the full editable scene as an `excalidraw` attachment (rides along in JSON export) plus a size-capped SVG preview shown on the sidebar card. Adds an "Add board"/"Open board" note action and the `note.open-board` command. A custom `loader` option can replace the CDN (e.g. for CSP-strict sites)
 
 ## Reference userscript

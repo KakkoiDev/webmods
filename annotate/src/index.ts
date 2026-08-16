@@ -27,6 +27,10 @@ export type {
 } from "./plugins/chat";
 export { createClaudeProvider } from "./providers/claude";
 export type { ClaudeProviderOptions } from "./providers/claude";
+export { createOpenAIProvider } from "./providers/openai";
+export type { OpenAIProviderOptions } from "./providers/openai";
+export { buildSystemPrompt } from "./providers/context-prompt";
+export { parseSSE } from "./providers/sse";
 export { createExcalidrawPlugin, isExcalidrawAttachment } from "./plugins/excalidraw";
 export type { ExcalidrawAttachment, ExcalidrawScene, ExcalidrawPlugin, ExcalidrawLoader } from "./plugins/excalidraw";
 export { createDefaultPageIdentityResolver, normalizeUrl, stripOwnFragment, hashString } from "./page-identity";

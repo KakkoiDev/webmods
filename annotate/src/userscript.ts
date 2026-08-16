@@ -10,6 +10,8 @@ import { createGlobalBrowserPlugin } from "./plugins/global-browser";
 import { createExcalidrawPlugin } from "./plugins/excalidraw";
 import { createPortableDataPlugin } from "./plugins/portable-data";
 import { createClaudeProvider } from "./providers/claude";
+import { createOpenAIProvider } from "./providers/openai";
+import type { ChatProvider } from "./plugins/chat";
 import { createTampermonkeyStorage } from "./storage";
 
 declare function GM_registerMenuCommand(caption: string, onClick: () => void): void;
@@ -31,8 +33,16 @@ function pickFile(accept: string): Promise<string | null> {
   });
 }
 
+const CHAT_PROVIDER_SETTING = "chat.provider";
 const CHAT_KEY_SETTING = "chat.apiKey";
 const CHAT_MODEL_SETTING = "chat.model";
+const CHAT_BASE_URL_SETTING = "chat.baseURL";
+
+/** Build the configured provider. Anthropic and any OpenAI-compatible API are supported. */
+function buildProvider(kind: string | undefined, apiKey: string, model?: string, baseURL?: string): ChatProvider {
+  if (kind === "openai") return createOpenAIProvider({ apiKey, model, baseURL });
+  return createClaudeProvider({ apiKey, model });
+}
 
 export function startUserscript(): void {
   const storage = createTampermonkeyStorage();
@@ -50,8 +60,12 @@ export function startUserscript(): void {
   void (async () => {
     const apiKey = await storage.getSetting<string>(CHAT_KEY_SETTING);
     if (!apiKey) return;
-    const model = await storage.getSetting<string>(CHAT_MODEL_SETTING);
-    annotator.use(createChatPlugin({ provider: createClaudeProvider({ apiKey, model }) }));
+    const [kind, model, baseURL] = await Promise.all([
+      storage.getSetting<string>(CHAT_PROVIDER_SETTING),
+      storage.getSetting<string>(CHAT_MODEL_SETTING),
+      storage.getSetting<string>(CHAT_BASE_URL_SETTING),
+    ]);
+    annotator.use(createChatPlugin({ provider: buildProvider(kind, apiKey, model, baseURL) }));
   })();
 
   if (typeof GM_registerMenuCommand === "function") {
@@ -67,16 +81,39 @@ export function startUserscript(): void {
       download(`webmods-annotations-${new Date().toISOString().slice(0, 10)}.md`, md, "text/markdown");
     });
     GM_registerMenuCommand("Configure AI chat…", async () => {
+      const currentKind = (await storage.getSetting<string>(CHAT_PROVIDER_SETTING)) ?? "anthropic";
+      const kindInput = prompt(
+        'Provider: "anthropic" or "openai".\n\n"openai" also works with any OpenAI-compatible API ' +
+          "(OpenRouter, Groq, Together, local Ollama) — you'll be asked for a base URL.",
+        currentKind
+      );
+      if (kindInput === null) return;
+      const kind = kindInput.trim().toLowerCase() === "openai" ? "openai" : "anthropic";
+      await storage.setSetting?.(CHAT_PROVIDER_SETTING, kind);
+
       const current = await storage.getSetting<string>(CHAT_KEY_SETTING);
       const key = prompt(
-        "Anthropic API key (stored in Tampermonkey storage only, never exported). Leave blank to disable AI chat.",
+        `${kind === "openai" ? "OpenAI" : "Anthropic"} API key (stored in Tampermonkey storage only, ` +
+          "never exported). Leave blank to disable AI chat.",
         current ?? ""
       );
       if (key === null) return;
       await storage.setSetting?.(CHAT_KEY_SETTING, key.trim());
+
       if (key.trim()) {
-        const model = prompt("Model (blank for the default, claude-opus-5):", "");
+        const defaultModel = kind === "openai" ? "gpt-5" : "claude-opus-5";
+        const model = prompt(`Model (blank for the default, ${defaultModel}):`, "");
         if (model !== null) await storage.setSetting?.(CHAT_MODEL_SETTING, model.trim() || undefined);
+
+        if (kind === "openai") {
+          const baseURL = prompt(
+            "Base URL (blank for OpenAI). Examples:\n" +
+              "  https://openrouter.ai/api/v1\n" +
+              "  http://localhost:11434/v1",
+            (await storage.getSetting<string>(CHAT_BASE_URL_SETTING)) ?? ""
+          );
+          if (baseURL !== null) await storage.setSetting?.(CHAT_BASE_URL_SETTING, baseURL.trim() || undefined);
+        }
       }
       alert("Saved. Reload the page to apply.");
     });

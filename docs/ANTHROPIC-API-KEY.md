@@ -111,6 +111,23 @@ annotate sidebar.
   prompt: `claude-sonnet-5` ($3/$15) or `claude-haiku-4-5` ($1/$5). Spend limits
   for this workspace live under **Manage → Spend limits** on the same Console page.
 
+## Don't want to chase an Anthropic key at all?
+
+The Chat tab supports **any OpenAI-compatible API** as well. In *Configure AI chat…*
+answer `openai` at the provider prompt, then supply the key, a model, and
+optionally a base URL:
+
+| Base URL | Gets you |
+|---|---|
+| *(blank)* | OpenAI proper |
+| `https://openrouter.ai/api/v1` | OpenRouter — one key, many models, including Claude |
+| `http://localhost:11434/v1` | Local Ollama (no key needed; put any placeholder) |
+
+An OpenAI key is self-serve at `platform.openai.com/api-keys` and doesn't depend
+on meetsmore admin permissions, which makes it the path of least resistance here.
+Note it is billed per token by that provider — like the Anthropic key, it does not
+draw on any Claude subscription session limit.
+
 ## If a key never materializes
 
 Nothing else is blocked. Notes, text-range annotations, whiteboards, the sidebar,

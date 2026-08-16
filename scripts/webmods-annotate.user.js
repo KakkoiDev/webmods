@@ -16,7 +16,7 @@
 
 "use strict";
 (() => {
-  // src/blocks.ts
+  // annotate/src/blocks.ts
   var SEMANTIC_TAGS = /* @__PURE__ */ new Set([
     "ARTICLE",
     "SECTION",
@@ -125,7 +125,7 @@
     };
   }
 
-  // src/text-utils.ts
+  // annotate/src/text-utils.ts
   function normalizeText(text) {
     return text.replace(/\s+/g, " ").trim();
   }
@@ -149,7 +149,7 @@
     return 2 * matches / (a.length + b.length - 2);
   }
 
-  // src/ranges.ts
+  // annotate/src/ranges.ts
   var QUOTE_MAX = 300;
   var CONTEXT_CHARS = 32;
   function blockTextWithMap(block) {
@@ -325,7 +325,7 @@
     return buildRange(map, bestAt, Math.min(map.text.length, bestAt + len));
   }
 
-  // src/anchors.ts
+  // annotate/src/anchors.ts
   var QUOTE_MAX2 = 300;
   var CONTEXT_MAX = 60;
   var STABLE_ATTRS = ["id", "data-testid", "data-qa", "data-test", "name", "aria-label", "role", "href", "title"];
@@ -541,7 +541,7 @@
     return { status: "detached", reason: "no candidate matched with sufficient confidence" };
   }
 
-  // src/commands.ts
+  // annotate/src/commands.ts
   function createCommandRegistry() {
     const commands = /* @__PURE__ */ new Map();
     return {
@@ -561,7 +561,7 @@
     };
   }
 
-  // src/dom-utils.ts
+  // annotate/src/dom-utils.ts
   function download(filename, text, type) {
     const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
@@ -580,7 +580,7 @@
     await navigator.clipboard.writeText(text);
   }
 
-  // src/events.ts
+  // annotate/src/events.ts
   var Emitter = class {
     constructor() {
       this.handlers = /* @__PURE__ */ new Map();
@@ -622,12 +622,12 @@
     return `${time}${rand}`;
   }
 
-  // src/types.ts
+  // annotate/src/types.ts
   var SCHEMA_VERSION = 1;
   var NOTE_FRAGMENT_PARAM = "wm-note";
   var INLINE_FRAGMENT_PARAM = "wm";
 
-  // src/page-identity.ts
+  // annotate/src/page-identity.ts
   var DEFAULT_TRACKING_PARAMS = [
     "utm_source",
     "utm_medium",
@@ -696,7 +696,7 @@
     };
   }
 
-  // src/storage.ts
+  // annotate/src/storage.ts
   function emptyDB() {
     return { schemaVersion: SCHEMA_VERSION, pages: {} };
   }
@@ -839,7 +839,7 @@
     );
   }
 
-  // src/markdown.ts
+  // annotate/src/markdown.ts
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
@@ -937,7 +937,7 @@
     return html.join("\n");
   }
 
-  // src/ui.ts
+  // annotate/src/ui.ts
   var CSS2 = `
 :host { all: initial; }
 * { box-sizing: border-box; }
@@ -1503,7 +1503,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     }
   };
 
-  // src/annotator.ts
+  // annotate/src/annotator.ts
   var DEFAULT_SHORTCUT = "alt+shift+a";
   var DEFAULT_SIDEBAR_SHORTCUT = "alt+shift+s";
   function matchesShortcut(e, shortcut) {
@@ -1931,7 +1931,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     return api;
   }
 
-  // src/plugins/chat.ts
+  // annotate/src/plugins/chat.ts
   var MAX_PAGE_CHARS = 12e3;
   var MAX_TARGET_CHARS = 4e3;
   var MAX_SURROUNDING_CHARS = 1e3;
@@ -2236,7 +2236,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     return plugin;
   }
 
-  // src/plugins/portable-data.ts
+  // annotate/src/plugins/portable-data.ts
   var INLINE_MAX_BYTES = 4096;
   function validateAnnotation(value) {
     if (!value || typeof value !== "object") return false;
@@ -2414,7 +2414,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     return plugin;
   }
 
-  // src/plugins/global-browser.ts
+  // annotate/src/plugins/global-browser.ts
   var MAX_RESULTS = 5e3;
   function hostOf(url) {
     try {
@@ -2698,7 +2698,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     return plugin;
   }
 
-  // src/plugins/excalidraw.ts
+  // annotate/src/plugins/excalidraw.ts
   function isExcalidrawAttachment(att) {
     return att.type === "excalidraw";
   }
@@ -2861,15 +2861,10 @@ button.wm-btn.wm-danger { color: #d1242f; }
     };
   }
 
-  // src/providers/claude.ts
-  var DEFAULT_MODEL = "claude-opus-5";
-  var DEFAULT_MAX_TOKENS = 8192;
-  var DEFAULT_EFFORT = "medium";
-  var DEFAULT_ENDPOINT = "https://api.anthropic.com/v1/messages";
-  var API_VERSION = "2023-06-01";
+  // annotate/src/providers/context-prompt.ts
   var SYSTEM_PREAMBLE = "You are helping a user understand and annotate a web page. Answer from the page context below when it is relevant, and say so plainly when it is not. Be concise: lead with the answer, then supporting detail.";
-  function buildSystemPrompt(context) {
-    const parts = [SYSTEM_PREAMBLE, "", "# Page", `Title: ${context.page.title ?? "(untitled)"}`, `URL: ${context.page.normalizedUrl}`];
+  function buildSystemPrompt(context, preamble = SYSTEM_PREAMBLE) {
+    const parts = [preamble, "", "# Page", `Title: ${context.page.title ?? "(untitled)"}`, `URL: ${context.page.normalizedUrl}`];
     if (context.targetText) {
       parts.push("", "# Annotated block", "```", context.targetText, "```");
     }
@@ -2893,6 +2888,8 @@ button.wm-btn.wm-danger { color: #d1242f; }
     }
     return parts.join("\n");
   }
+
+  // annotate/src/providers/sse.ts
   async function* parseSSE(body) {
     const reader = body.getReader();
     const decoder = new TextDecoder();
@@ -2921,20 +2918,26 @@ button.wm-btn.wm-danger { color: #d1242f; }
       reader.releaseLock();
     }
   }
-  async function describeError(response) {
+  async function describeError(response, label) {
     let detail = "";
     try {
       const text = await response.text();
       try {
-        const parsed = JSON.parse(text);
-        detail = parsed?.error?.message ?? text;
+        detail = JSON.parse(text)?.error?.message ?? text;
       } catch {
         detail = text;
       }
     } catch {
     }
-    return `Claude API ${response.status}${detail ? `: ${detail.slice(0, 400)}` : ""}`;
+    return `${label} ${response.status}${detail ? `: ${String(detail).slice(0, 400)}` : ""}`;
   }
+
+  // annotate/src/providers/claude.ts
+  var DEFAULT_MODEL = "claude-opus-5";
+  var DEFAULT_MAX_TOKENS = 8192;
+  var DEFAULT_EFFORT = "medium";
+  var DEFAULT_ENDPOINT = "https://api.anthropic.com/v1/messages";
+  var API_VERSION = "2023-06-01";
   function createClaudeProvider(options) {
     const {
       apiKey,
@@ -2969,7 +2972,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
             },
             body: JSON.stringify(body)
           });
-          if (!response.ok) throw new Error(await describeError(response));
+          if (!response.ok) throw new Error(await describeError(response, "Claude API"));
           if (!response.body) throw new Error("Claude API returned no response body");
           for await (const event of parseSSE(response.body)) {
             if (event.type === "error") {
@@ -2986,7 +2989,58 @@ button.wm-btn.wm-danger { color: #d1242f; }
     };
   }
 
-  // src/userscript.ts
+  // annotate/src/providers/openai.ts
+  var DEFAULT_MODEL2 = "gpt-5";
+  var DEFAULT_BASE_URL = "https://api.openai.com/v1";
+  var DEFAULT_MAX_TOKENS2 = 4096;
+  function createOpenAIProvider(options) {
+    const {
+      apiKey,
+      model = DEFAULT_MODEL2,
+      baseURL = DEFAULT_BASE_URL,
+      maxTokens = DEFAULT_MAX_TOKENS2,
+      headers: extraHeaders,
+      fetchFn
+    } = options;
+    const endpoint = `${baseURL.replace(/\/+$/, "")}/chat/completions`;
+    return {
+      name: model,
+      send(request) {
+        const doFetch = fetchFn ?? globalThis.fetch.bind(globalThis);
+        const body = {
+          model,
+          stream: true,
+          max_completion_tokens: maxTokens,
+          messages: [
+            { role: "system", content: buildSystemPrompt(request.context) },
+            ...request.messages.map((m) => ({ role: m.role, content: m.content }))
+          ]
+        };
+        async function* stream() {
+          const response = await doFetch(endpoint, {
+            method: "POST",
+            signal: request.signal,
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${apiKey}`,
+              ...extraHeaders
+            },
+            body: JSON.stringify(body)
+          });
+          if (!response.ok) throw new Error(await describeError(response, "OpenAI API"));
+          if (!response.body) throw new Error("OpenAI API returned no response body");
+          for await (const frame of parseSSE(response.body)) {
+            if (frame.error) throw new Error(`OpenAI API error: ${frame.error.message ?? "unknown"}`);
+            const delta = frame.choices?.[0]?.delta?.content;
+            if (delta) yield { delta };
+          }
+        }
+        return stream();
+      }
+    };
+  }
+
+  // annotate/src/userscript.ts
   function pickFile(accept) {
     return new Promise((resolve) => {
       const input = document.createElement("input");
@@ -3003,8 +3057,14 @@ button.wm-btn.wm-danger { color: #d1242f; }
       input.click();
     });
   }
+  var CHAT_PROVIDER_SETTING = "chat.provider";
   var CHAT_KEY_SETTING = "chat.apiKey";
   var CHAT_MODEL_SETTING = "chat.model";
+  var CHAT_BASE_URL_SETTING = "chat.baseURL";
+  function buildProvider(kind, apiKey, model, baseURL) {
+    if (kind === "openai") return createOpenAIProvider({ apiKey, model, baseURL });
+    return createClaudeProvider({ apiKey, model });
+  }
   function startUserscript() {
     const storage = createTampermonkeyStorage();
     const annotator = createAnnotator({ storage });
@@ -3015,8 +3075,12 @@ button.wm-btn.wm-danger { color: #d1242f; }
     void (async () => {
       const apiKey = await storage.getSetting(CHAT_KEY_SETTING);
       if (!apiKey) return;
-      const model = await storage.getSetting(CHAT_MODEL_SETTING);
-      annotator.use(createChatPlugin({ provider: createClaudeProvider({ apiKey, model }) }));
+      const [kind, model, baseURL] = await Promise.all([
+        storage.getSetting(CHAT_PROVIDER_SETTING),
+        storage.getSetting(CHAT_MODEL_SETTING),
+        storage.getSetting(CHAT_BASE_URL_SETTING)
+      ]);
+      annotator.use(createChatPlugin({ provider: buildProvider(kind, apiKey, model, baseURL) }));
     })();
     if (typeof GM_registerMenuCommand === "function") {
       GM_registerMenuCommand("Toggle annotate mode (Alt+Shift+A)", () => annotator.toggle());
@@ -3031,16 +3095,34 @@ button.wm-btn.wm-danger { color: #d1242f; }
         download(`webmods-annotations-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.md`, md, "text/markdown");
       });
       GM_registerMenuCommand("Configure AI chat\u2026", async () => {
+        const currentKind = await storage.getSetting(CHAT_PROVIDER_SETTING) ?? "anthropic";
+        const kindInput = prompt(
+          `Provider: "anthropic" or "openai".
+
+"openai" also works with any OpenAI-compatible API (OpenRouter, Groq, Together, local Ollama) \u2014 you'll be asked for a base URL.`,
+          currentKind
+        );
+        if (kindInput === null) return;
+        const kind = kindInput.trim().toLowerCase() === "openai" ? "openai" : "anthropic";
+        await storage.setSetting?.(CHAT_PROVIDER_SETTING, kind);
         const current = await storage.getSetting(CHAT_KEY_SETTING);
         const key = prompt(
-          "Anthropic API key (stored in Tampermonkey storage only, never exported). Leave blank to disable AI chat.",
+          `${kind === "openai" ? "OpenAI" : "Anthropic"} API key (stored in Tampermonkey storage only, never exported). Leave blank to disable AI chat.`,
           current ?? ""
         );
         if (key === null) return;
         await storage.setSetting?.(CHAT_KEY_SETTING, key.trim());
         if (key.trim()) {
-          const model = prompt("Model (blank for the default, claude-opus-5):", "");
+          const defaultModel = kind === "openai" ? "gpt-5" : "claude-opus-5";
+          const model = prompt(`Model (blank for the default, ${defaultModel}):`, "");
           if (model !== null) await storage.setSetting?.(CHAT_MODEL_SETTING, model.trim() || void 0);
+          if (kind === "openai") {
+            const baseURL = prompt(
+              "Base URL (blank for OpenAI). Examples:\n  https://openrouter.ai/api/v1\n  http://localhost:11434/v1",
+              await storage.getSetting(CHAT_BASE_URL_SETTING) ?? ""
+            );
+            if (baseURL !== null) await storage.setSetting?.(CHAT_BASE_URL_SETTING, baseURL.trim() || void 0);
+          }
         }
         alert("Saved. Reload the page to apply.");
       });
@@ -3058,6 +3140,6 @@ button.wm-btn.wm-danger { color: #d1242f; }
     globalThis.__wmAnnotate = annotator;
   }
 
-  // src/userscript-main.ts
+  // annotate/src/userscript-main.ts
   startUserscript();
 })();
