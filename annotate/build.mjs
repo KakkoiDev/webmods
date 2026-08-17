@@ -74,6 +74,8 @@ const header = `// ==UserScript==
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
 // @license      MIT
+// @updateURL    https://raw.githubusercontent.com/KakkoiDev/webmods/main/scripts/webmods-annotate.user.js
+// @downloadURL  https://raw.githubusercontent.com/KakkoiDev/webmods/main/scripts/webmods-annotate.user.js
 // ==/UserScript==
 
 `;
