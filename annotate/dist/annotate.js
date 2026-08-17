@@ -1485,7 +1485,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
       this.composerEl = null;
       const back = this.composerReturnFocus;
       this.composerReturnFocus = null;
-      if (back && back.isConnected) back.focus?.();
+      if (back && back.isConnected) back.focus?.({ preventScroll: true });
     }
     hasComposerOpen() {
       return !!this.composerEl;

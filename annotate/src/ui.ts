@@ -443,7 +443,9 @@ export class AnnotatorUI {
     // Hand focus back where it came from, if that element is still around.
     const back = this.composerReturnFocus;
     this.composerReturnFocus = null;
-    if (back && back.isConnected) back.focus?.();
+    // preventScroll: a page-wide editor root (Notion, Google Docs) is scrolled to
+    // its own top when focused, which would throw the reader back to page one.
+    if (back && back.isConnected) back.focus?.({ preventScroll: true });
   }
 
   hasComposerOpen(): boolean {

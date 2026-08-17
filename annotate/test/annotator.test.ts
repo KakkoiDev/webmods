@@ -198,4 +198,44 @@ describe("shortcuts inside editors", () => {
     pressToggle(document.getElementById("composer")!);
     expect(annotator.getMode()).toBe("explore");
   });
+
+  // jsdom has no scrolling, so record how focus was requested: restoring focus to
+  // the editor root without preventScroll jumps Notion back to the top of the page.
+  it("restores focus after the composer closes without scrolling the page", async () => {
+    document.body.innerHTML = `
+      <div id="editor" contenteditable="true">
+        <div id="block">Add the Order and OrderLine models with their migration.</div>
+        <div>${"Body text that makes this editable root document-sized. ".repeat(12)}</div>
+      </div>
+    `;
+    fakeContentEditable();
+    Element.prototype.getBoundingClientRect = function () {
+      const height = Math.max(20, Math.min(600, (this.textContent || "").length / 2));
+      return { top: 100, left: 0, right: 600, bottom: 100 + height, width: 600, height, x: 0, y: 100, toJSON: () => ({}) } as DOMRect;
+    };
+    const calls: { el: Element; options?: FocusOptions }[] = [];
+    const original = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (options?: FocusOptions) {
+      calls.push({ el: this, options });
+      return original.call(this, options);
+    };
+    try {
+      const editor = document.getElementById("editor")!;
+      Object.defineProperty(document, "activeElement", { configurable: true, get: () => editor });
+      annotator = createAnnotator({ storage: createMemoryStorage() });
+      annotator.enter();
+      document.getElementById("block")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      const textarea = document.querySelector("[data-wm-annotate-ui]")!.shadowRoot!.querySelector("textarea") as HTMLTextAreaElement;
+      textarea.value = "a note";
+      const save = [...document.querySelector("[data-wm-annotate-ui]")!.shadowRoot!.querySelectorAll("button")].find((b) => b.textContent === "Save")!;
+      save.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+
+      const restore = calls.filter((c) => c.el === editor);
+      expect(restore.length).toBe(1);
+      expect(restore[0].options?.preventScroll).toBe(true);
+    } finally {
+      HTMLElement.prototype.focus = original;
+      delete (document as Partial<Document>).activeElement;
+    }
+  });
 });
