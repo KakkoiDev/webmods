@@ -223,6 +223,11 @@ export interface Annotator {
   /** Point an existing note at a new element, rebuilding its anchor. */
   reanchorNote(id: string, element: Element): Promise<Annotation>;
   deleteNote(id: string): Promise<void>;
+  /** Keep the note but drop its marker, highlight and place in the notes list. */
+  archiveNote(id: string): Promise<Annotation>;
+  unarchiveNote(id: string): Promise<Annotation>;
+  /** Archived notes on the current page (never anchor-resolved). */
+  getArchivedNotes(): Annotation[];
   getNote(id: string): Promise<Annotation | null>;
   getPageNotes(page?: PageIdentity): Promise<Annotation[]>;
   scrollToNote(id: string): Promise<boolean>;

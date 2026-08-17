@@ -134,6 +134,21 @@ describe("portable-data plugin", () => {
     expect(md).not.toContain("note c1");
   });
 
+  it("keeps archived notes in JSON and moves them to a trailing Markdown section", async () => {
+    const { plugin, storage } = attach();
+    await storage.save(makeAnnotation("a1"), page);
+    await storage.save({ ...makeAnnotation("a2"), metadata: { archived: 1755000000000 } }, page);
+
+    const doc = await plugin.exportJSON();
+    expect(doc.pages[0].annotations.map((a) => a.id).sort()).toEqual(["a1", "a2"]);
+
+    const md = await plugin.exportMarkdown();
+    expect(md).toContain("note a2");
+    const archivedAt = md.indexOf("# Archived");
+    expect(archivedAt).toBeGreaterThan(md.indexOf("note a1"));
+    expect(md.indexOf("note a2")).toBeGreaterThan(archivedAt);
+  });
+
   it("names export files after the scope", () => {
     const day = new Date("2026-08-18T00:00:00Z");
     expect(exportFilename("site", page, "md", day)).toBe("webmods-annotations-example.com-2026-08-18.md");

@@ -149,6 +149,50 @@ describe("createAnnotator", () => {
     expect(annotator.commands.has("note.reattach")).toBe(true);
   });
 
+  it("archives a note: no marker, no resolution work, still stored", async () => {
+    document.body.innerHTML = `<p id="target">A paragraph worth archiving a note about.</p>`;
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    const anchor = createAnchor(document.getElementById("target")!, "http://localhost/");
+    const note = await annotator.createNote(anchor, "keep but hide");
+    const shadow = () => document.querySelector("[data-wm-annotate-ui]")!.shadowRoot!;
+    expect(shadow().querySelectorAll(".wm-marker")).toHaveLength(1);
+
+    const archived = await annotator.archiveNote(note.id);
+    expect(typeof archived.metadata?.archived).toBe("number");
+    expect(annotator.getNotes()).toHaveLength(0);
+    expect(annotator.getArchivedNotes().map((a) => a.id)).toEqual([note.id]);
+    expect(shadow().querySelectorAll(".wm-marker")).toHaveLength(0);
+    expect(await annotator.getNote(note.id)).not.toBeNull();
+
+    const restored = await annotator.unarchiveNote(note.id);
+    expect(restored.metadata?.archived).toBeUndefined();
+    expect(annotator.getNotes()).toHaveLength(1);
+    expect(shadow().querySelectorAll(".wm-marker")).toHaveLength(1);
+  });
+
+  it("lists archived notes behind a disclosure with a Restore action", async () => {
+    document.body.innerHTML = `<p id="target">A paragraph worth archiving a note about.</p>`;
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    const anchor = createAnchor(document.getElementById("target")!, "http://localhost/");
+    const note = await annotator.createNote(anchor, "hidden note");
+    await annotator.archiveNote(note.id);
+    annotator.openSidebar();
+
+    const shadow = document.querySelector("[data-wm-annotate-ui]")!.shadowRoot!;
+    expect(shadow.querySelector(".wm-count")!.textContent).toBe("0 notes on this page");
+    expect(shadow.querySelector(".wm-archived > summary")!.textContent).toBe("Archived (1)");
+    const card = shadow.querySelector(`.wm-archived .wm-note[data-note-id="${note.id}"]`)!;
+    const labels = [...card.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels).toEqual(["Restore", "Delete"]);
+
+    [...card.querySelectorAll("button")]
+      .find((b) => b.textContent === "Restore")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(annotator.getNotes()).toHaveLength(1);
+    expect(shadow.querySelector(".wm-archived")).toBeNull();
+  });
+
   it("cleans up its UI and listeners on destroy", () => {
     annotator = createAnnotator({ storage: createMemoryStorage() });
     expect(document.querySelector("[data-wm-annotate-ui]")).toBeTruthy();

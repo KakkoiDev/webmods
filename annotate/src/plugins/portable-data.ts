@@ -1,3 +1,4 @@
+import { isArchived } from "../archive";
 import { download } from "../dom-utils";
 import type { Annotation, AnnotationStorage, AnnotatorPlugin, PageIdentity, PluginContext } from "../types";
 import { INLINE_FRAGMENT_PARAM, SCHEMA_VERSION } from "../types";
@@ -143,6 +144,28 @@ export function exportFilename(scope: ExportScope, current: PageIdentity, extens
   return `webmods-annotations-${host}-${today.toISOString().slice(0, 10)}.${extension}`;
 }
 
+/** Markdown for one page: a title heading at `level`, then one heading per note. */
+function pageSection(identity: PageIdentity, annotations: Annotation[], level = 1): string {
+  const hash = "#".repeat(level);
+  const lines: string[] = [`${hash} ${identity.title || identity.normalizedUrl}`, "", `Source: ${identity.url}`];
+  for (const a of [...annotations].sort((x, y) => x.createdAt - y.createdAt)) {
+    lines.push("");
+    const heading = a.anchor.fingerprint?.nearbyHeading || a.anchor.textQuote?.exact?.slice(0, 60) || "Note";
+    lines.push(`${hash}# ${heading}`);
+    lines.push("");
+    if (a.anchor.textQuote?.exact) {
+      lines.push(`> ${a.anchor.textQuote.exact.slice(0, 200)}`);
+      lines.push("");
+    }
+    lines.push(a.body.text);
+    for (const att of a.attachments ?? []) {
+      lines.push("");
+      lines.push(`Attachment: ${att.id}.${att.type}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 export function createPortableDataPlugin(): PortableDataPlugin {
   let ctx: PluginContext | null = null;
   const cleanups: Array<() => void> = [];
@@ -260,25 +283,19 @@ export function createPortableDataPlugin(): PortableDataPlugin {
       const pages = await collectOwnPages(opts.scope ?? "all");
       const sections: string[] = [];
       for (const { identity, annotations } of pages) {
-        if (!annotations.length) continue;
-        const lines: string[] = [];
-        lines.push(`# ${identity.title || identity.normalizedUrl}`);
-        lines.push("");
-        lines.push(`Source: ${identity.url}`);
-        for (const a of [...annotations].sort((x, y) => x.createdAt - y.createdAt)) {
+        const active = annotations.filter((a) => !isArchived(a));
+        if (!active.length) continue;
+        sections.push(pageSection(identity, active));
+      }
+      // Archived notes read as noise inline, so they land in one trailing section.
+      const archived = pages
+        .map(({ identity, annotations }) => ({ identity, annotations: annotations.filter(isArchived) }))
+        .filter((p) => p.annotations.length);
+      if (archived.length) {
+        const lines = ["# Archived"];
+        for (const { identity, annotations } of archived) {
           lines.push("");
-          const heading = a.anchor.fingerprint?.nearbyHeading || a.anchor.textQuote?.exact?.slice(0, 60) || "Note";
-          lines.push(`## ${heading}`);
-          lines.push("");
-          if (a.anchor.textQuote?.exact) {
-            lines.push(`> ${a.anchor.textQuote.exact.slice(0, 200)}`);
-            lines.push("");
-          }
-          lines.push(a.body.text);
-          for (const att of a.attachments ?? []) {
-            lines.push("");
-            lines.push(`Attachment: ${att.id}.${att.type}`);
-          }
+          lines.push(pageSection(identity, annotations, 2));
         }
         sections.push(lines.join("\n"));
       }

@@ -22,10 +22,12 @@ var WebmodsAnnotate = (() => {
   // src/index.ts
   var index_exports = {};
   __export(index_exports, {
+    ARCHIVED_KEY: () => ARCHIVED_KEY,
     DocumentStorage: () => DocumentStorage,
     INLINE_FRAGMENT_PARAM: () => INLINE_FRAGMENT_PARAM,
     NOTE_FRAGMENT_PARAM: () => NOTE_FRAGMENT_PARAM,
     SCHEMA_VERSION: () => SCHEMA_VERSION,
+    archivedAt: () => archivedAt,
     blockTextWithMap: () => blockTextWithMap,
     buildExcludeFn: () => buildExcludeFn,
     buildRange: () => buildRange,
@@ -59,6 +61,7 @@ var WebmodsAnnotate = (() => {
     generateId: () => generateId,
     hashString: () => hashString,
     indexedDBStorage: () => createIndexedDBStorage,
+    isArchived: () => isArchived,
     isExcalidrawAttachment: () => isExcalidrawAttachment,
     localStorageStorage: () => createLocalStorageStorage,
     memoryStorage: () => createMemoryStorage,
@@ -634,6 +637,16 @@ var WebmodsAnnotate = (() => {
       }
     }
     return { status: "detached", reason: "no candidate matched with sufficient confidence" };
+  }
+
+  // src/archive.ts
+  var ARCHIVED_KEY = "archived";
+  function isArchived(annotation) {
+    return typeof annotation.metadata?.[ARCHIVED_KEY] === "number";
+  }
+  function archivedAt(annotation) {
+    const value = annotation.metadata?.[ARCHIVED_KEY];
+    return typeof value === "number" ? value : null;
   }
 
   // src/commands.ts
@@ -1224,6 +1237,8 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
 }
 .wm-badge-detached { background: #fff1f0; color: #d1242f; border: 1px solid #ffd7d5; }
 .wm-badge-attach { background: #eef1f4; color: #57606a; border: 1px solid #d0d7de; }
+.wm-archived > summary { font-size: 12px; color: #57606a; cursor: pointer; margin-bottom: 8px; }
+.wm-note-archived { opacity: 0.75; cursor: default; }
 .wm-empty { color: #57606a; font-size: 13px; padding: 12px 4px; }
 .wm-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .wm-mode-pill {
@@ -1250,6 +1265,7 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
       this.activeTab = "notes";
       this.tabCleanup = null;
       this.notes = [];
+      this.archived = [];
       this.repositionScheduled = false;
       this.listeners = [];
       this.noteCallbacks = noteCallbacks;
@@ -1340,8 +1356,9 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
       setTimeout(() => flash.remove(), 2300);
     }
     // -- markers --------------------------------------------------------------
-    renderNotes(notes) {
+    renderNotes(notes, archived = []) {
       this.notes = notes;
+      this.archived = archived;
       for (const { el } of this.markers.values()) el.remove();
       this.markers.clear();
       for (const { el } of this.rangeBoxes) el.remove();
@@ -1626,86 +1643,104 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
       count.className = "wm-count";
       count.textContent = `${this.notes.length} note${this.notes.length === 1 ? "" : "s"} on this page`;
       this.sidebarBody.appendChild(count);
-      if (!this.notes.length) {
+      if (!this.notes.length && !this.archived.length) {
         const empty = this.doc.createElement("div");
         empty.className = "wm-empty";
         empty.textContent = "No annotations yet. Enter annotate mode and click a block to add one.";
         this.sidebarBody.appendChild(empty);
         return;
       }
-      for (const note of this.notes) {
-        const card = this.doc.createElement("div");
-        card.className = "wm-note";
-        card.dataset.noteId = note.annotation.id;
-        card.tabIndex = 0;
-        card.setAttribute("role", "button");
-        card.setAttribute("aria-label", "Go to annotation");
-        const detached = note.resolution.status === "detached";
-        const context = this.doc.createElement("div");
-        context.className = "wm-note-context";
-        context.textContent = note.annotation.anchor.textQuote?.exact?.slice(0, 90) || note.annotation.anchor.fingerprint?.tag || "";
-        if (detached) {
-          const badge = this.doc.createElement("span");
-          badge.className = "wm-badge wm-badge-detached";
-          badge.textContent = "detached";
-          context.appendChild(badge);
-        } else if (note.annotation.anchor.kind === "range" && note.resolution.status === "resolved" && !note.resolution.range) {
-          const badge = this.doc.createElement("span");
-          badge.className = "wm-badge wm-badge-attach";
-          badge.textContent = "text moved";
-          context.appendChild(badge);
+      for (const note of this.notes) this.sidebarBody.appendChild(this.buildNoteCard(note, false));
+      if (this.archived.length) {
+        const details = this.doc.createElement("details");
+        details.className = "wm-archived";
+        const summary = this.doc.createElement("summary");
+        summary.textContent = `Archived (${this.archived.length})`;
+        details.appendChild(summary);
+        for (const annotation of this.archived) {
+          details.appendChild(this.buildNoteCard({ annotation, resolution: { status: "detached" } }, true));
         }
-        if (note.annotation.attachments?.length) {
-          const badge = this.doc.createElement("span");
-          badge.className = "wm-badge wm-badge-attach";
-          badge.textContent = `\u{1F4CE} ${note.annotation.attachments.length}`;
-          context.appendChild(badge);
+        this.sidebarBody.appendChild(details);
+      }
+    }
+    /** One sidebar card. Archived cards carry no anchor state, so they only restore or delete. */
+    buildNoteCard(note, archivedCard) {
+      const card = this.doc.createElement("div");
+      card.className = archivedCard ? "wm-note wm-note-archived" : "wm-note";
+      card.dataset.noteId = note.annotation.id;
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.setAttribute("aria-label", archivedCard ? "Archived annotation" : "Go to annotation");
+      const detached = note.resolution.status === "detached";
+      const context = this.doc.createElement("div");
+      context.className = "wm-note-context";
+      context.textContent = note.annotation.anchor.textQuote?.exact?.slice(0, 90) || note.annotation.anchor.fingerprint?.tag || "";
+      if (detached && !archivedCard) {
+        const badge = this.doc.createElement("span");
+        badge.className = "wm-badge wm-badge-detached";
+        badge.textContent = "detached";
+        context.appendChild(badge);
+      } else if (note.annotation.anchor.kind === "range" && note.resolution.status === "resolved" && !note.resolution.range) {
+        const badge = this.doc.createElement("span");
+        badge.className = "wm-badge wm-badge-attach";
+        badge.textContent = "text moved";
+        context.appendChild(badge);
+      }
+      if (note.annotation.attachments?.length) {
+        const badge = this.doc.createElement("span");
+        badge.className = "wm-badge wm-badge-attach";
+        badge.textContent = `\u{1F4CE} ${note.annotation.attachments.length}`;
+        context.appendChild(badge);
+      }
+      card.appendChild(context);
+      const body = this.doc.createElement("div");
+      body.className = "wm-note-body";
+      body.innerHTML = renderMarkdown(note.annotation.body.text);
+      card.appendChild(body);
+      for (const att of note.annotation.attachments ?? []) {
+        const preview = att.preview;
+        if (typeof preview === "string" && preview.trimStart().startsWith("<svg")) {
+          const img = this.doc.createElement("img");
+          img.className = "wm-note-preview";
+          img.alt = `${att.type} attachment preview`;
+          img.src = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(preview)))}`;
+          card.appendChild(img);
         }
-        card.appendChild(context);
-        const body = this.doc.createElement("div");
-        body.className = "wm-note-body";
-        body.innerHTML = renderMarkdown(note.annotation.body.text);
-        card.appendChild(body);
-        for (const att of note.annotation.attachments ?? []) {
-          const preview = att.preview;
-          if (typeof preview === "string" && preview.trimStart().startsWith("<svg")) {
-            const img = this.doc.createElement("img");
-            img.className = "wm-note-preview";
-            img.alt = `${att.type} attachment preview`;
-            img.src = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(preview)))}`;
-            card.appendChild(img);
-          }
-        }
-        const actions = this.doc.createElement("div");
-        actions.className = "wm-note-actions";
-        const id = note.annotation.id;
-        if (!detached) {
-          actions.appendChild(this.makeButton("Edit", "wm-btn", () => this.noteCallbacks.onEdit(id)));
-        } else {
-          actions.appendChild(this.makeButton("Re-attach", "wm-btn", () => this.noteCallbacks.onReattach(id)));
-        }
+      }
+      const actions = this.doc.createElement("div");
+      actions.className = "wm-note-actions";
+      const id = note.annotation.id;
+      if (archivedCard) {
+        actions.appendChild(this.makeButton("Restore", "wm-btn", () => this.noteCallbacks.onUnarchive(id)));
+      } else if (!detached) {
+        actions.appendChild(this.makeButton("Edit", "wm-btn", () => this.noteCallbacks.onEdit(id)));
+      } else {
+        actions.appendChild(this.makeButton("Re-attach", "wm-btn", () => this.noteCallbacks.onReattach(id)));
+      }
+      if (!archivedCard) {
         actions.appendChild(this.makeButton("Copy link", "wm-btn", () => this.noteCallbacks.onCopyLink(id)));
         for (const action of this.noteActions) {
           const label = typeof action.label === "function" ? action.label(note.annotation) : action.label;
           actions.appendChild(this.makeButton(label, "wm-btn", () => action.onClick(note.annotation)));
         }
-        actions.appendChild(this.makeButton("Delete", "wm-btn wm-danger", () => this.noteCallbacks.onDelete(id)));
-        card.appendChild(actions);
-        const navigate = () => {
-          if (!detached) this.noteCallbacks.onNavigate(id);
-        };
-        card.addEventListener("click", (e) => {
-          if (e.target.closest("button")) return;
-          navigate();
-        });
-        card.addEventListener("keydown", (e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            navigate();
-          }
-        });
-        this.sidebarBody.appendChild(card);
+        actions.appendChild(this.makeButton("Archive", "wm-btn", () => this.noteCallbacks.onArchive(id)));
       }
+      actions.appendChild(this.makeButton("Delete", "wm-btn wm-danger", () => this.noteCallbacks.onDelete(id)));
+      card.appendChild(actions);
+      const navigate = () => {
+        if (!detached && !archivedCard) this.noteCallbacks.onNavigate(id);
+      };
+      card.addEventListener("click", (e) => {
+        if (e.target.closest("button")) return;
+        navigate();
+      });
+      card.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          navigate();
+        }
+      });
+      return card;
     }
   };
 
@@ -1743,6 +1778,7 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
     let mode = "explore";
     let page = resolvePageIdentity(win.location, doc);
     let resolved = [];
+    let archived = [];
     let destroyed = false;
     const plugins = [];
     const cleanups = [];
@@ -1764,7 +1800,9 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
       onEdit: (id) => void editNote(id),
       onDelete: (id) => void deleteNote(id),
       onCopyLink: (id) => void copyNoteLink(id),
-      onReattach: (id) => startReanchor(id)
+      onReattach: (id) => startReanchor(id),
+      onArchive: (id) => void setArchived(id, true).catch((err) => fail(err, "archive")),
+      onUnarchive: (id) => void setArchived(id, false).catch((err) => fail(err, "unarchive"))
     });
     async function refresh() {
       try {
@@ -1775,14 +1813,15 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
           emitter.emit("page:change", { page });
         }
         const annotations = await storage.getPage(page);
-        resolved = annotations.map((annotation) => {
+        archived = annotations.filter(isArchived);
+        resolved = annotations.filter((a) => !isArchived(a)).map((annotation) => {
           const resolution = resolveAnchor(annotation.anchor, doc);
           if (resolution.status === "detached") {
             emitter.emit("anchor:detached", { annotation, reason: resolution.reason });
           }
           return { annotation, resolution };
         });
-        ui.renderNotes(resolved);
+        ui.renderNotes(resolved, archived);
         ensureObserver();
       } catch (err) {
         fail(err, "refresh");
@@ -1844,6 +1883,14 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
       emitter.emit("note:save", { annotation });
       await refresh();
       return annotation;
+    }
+    async function setArchived(id, on) {
+      const existing = await storage.get(id);
+      if (!existing) throw new Error(`Annotation not found: ${id}`);
+      const metadata = { ...existing.metadata };
+      if (on) metadata[ARCHIVED_KEY] = Date.now();
+      else delete metadata[ARCHIVED_KEY];
+      return updateNote(id, { metadata });
     }
     async function reanchorNote(id, element) {
       const existing = await storage.get(id);
@@ -2094,6 +2141,8 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
     commands.register("note.copy-link", (id) => copyNoteLink(String(id)));
     commands.register("note.edit", (id) => editNote(String(id)));
     commands.register("note.reattach", (id) => startReanchor(String(id)));
+    commands.register("note.archive", (id) => setArchived(String(id), true));
+    commands.register("note.unarchive", (id) => setArchived(String(id), false));
     const api = {
       enter: () => setMode("annotate"),
       exit: () => setMode("explore"),
@@ -2106,6 +2155,9 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
       updateNote,
       reanchorNote,
       deleteNote,
+      archiveNote: (id) => setArchived(id, true),
+      unarchiveNote: (id) => setArchived(id, false),
+      getArchivedNotes: () => archived.slice(),
       getNote: (id) => storage.get(id),
       getPageNotes: (p) => storage.getPage(p ?? page),
       scrollToNote,
@@ -2205,6 +2257,26 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
   function exportFilename(scope, current, extension, today = /* @__PURE__ */ new Date()) {
     const host = scope === "all" ? "all" : hostOf(current.normalizedUrl) ?? hostOf(current.url) ?? "page";
     return `webmods-annotations-${host}-${today.toISOString().slice(0, 10)}.${extension}`;
+  }
+  function pageSection(identity, annotations, level = 1) {
+    const hash = "#".repeat(level);
+    const lines = [`${hash} ${identity.title || identity.normalizedUrl}`, "", `Source: ${identity.url}`];
+    for (const a of [...annotations].sort((x, y) => x.createdAt - y.createdAt)) {
+      lines.push("");
+      const heading = a.anchor.fingerprint?.nearbyHeading || a.anchor.textQuote?.exact?.slice(0, 60) || "Note";
+      lines.push(`${hash}# ${heading}`);
+      lines.push("");
+      if (a.anchor.textQuote?.exact) {
+        lines.push(`> ${a.anchor.textQuote.exact.slice(0, 200)}`);
+        lines.push("");
+      }
+      lines.push(a.body.text);
+      for (const att of a.attachments ?? []) {
+        lines.push("");
+        lines.push(`Attachment: ${att.id}.${att.type}`);
+      }
+    }
+    return lines.join("\n");
   }
   function createPortableDataPlugin() {
     let ctx = null;
@@ -2310,25 +2382,16 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
         const pages = await collectOwnPages(opts.scope ?? "all");
         const sections = [];
         for (const { identity, annotations } of pages) {
-          if (!annotations.length) continue;
-          const lines = [];
-          lines.push(`# ${identity.title || identity.normalizedUrl}`);
-          lines.push("");
-          lines.push(`Source: ${identity.url}`);
-          for (const a of [...annotations].sort((x, y) => x.createdAt - y.createdAt)) {
+          const active = annotations.filter((a) => !isArchived(a));
+          if (!active.length) continue;
+          sections.push(pageSection(identity, active));
+        }
+        const archived = pages.map(({ identity, annotations }) => ({ identity, annotations: annotations.filter(isArchived) })).filter((p) => p.annotations.length);
+        if (archived.length) {
+          const lines = ["# Archived"];
+          for (const { identity, annotations } of archived) {
             lines.push("");
-            const heading = a.anchor.fingerprint?.nearbyHeading || a.anchor.textQuote?.exact?.slice(0, 60) || "Note";
-            lines.push(`## ${heading}`);
-            lines.push("");
-            if (a.anchor.textQuote?.exact) {
-              lines.push(`> ${a.anchor.textQuote.exact.slice(0, 200)}`);
-              lines.push("");
-            }
-            lines.push(a.body.text);
-            for (const att of a.attachments ?? []) {
-              lines.push("");
-              lines.push(`Attachment: ${att.id}.${att.type}`);
-            }
+            lines.push(pageSection(identity, annotations, 2));
           }
           sections.push(lines.join("\n"));
         }
@@ -2603,7 +2666,8 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
                       const context = document.createElement("div");
                       context.className = "wm-gb-context";
                       const quote = annotation.anchor.textQuote?.exact;
-                      context.textContent = `${formatDate(annotation.updatedAt)}${quote ? ` \xB7 ${quote.slice(0, 60)}` : ""}`;
+                      const state = isArchived(annotation) ? "archived \xB7 " : "";
+                      context.textContent = `${state}${formatDate(annotation.updatedAt)}${quote ? ` \xB7 ${quote.slice(0, 60)}` : ""}`;
                       row.append(excerpt, context);
                       row.addEventListener("click", () => {
                         if (pageId === pluginCtx.getPage().id) {

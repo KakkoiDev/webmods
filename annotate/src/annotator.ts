@@ -1,4 +1,5 @@
 import { createAnchor, resolveAnchor } from "./anchors";
+import { ARCHIVED_KEY, isArchived } from "./archive";
 import { createRangeAnchor } from "./ranges";
 import { buildExcludeFn, createDefaultBlockResolver, inDocumentEditor, isAnnotatorUI } from "./blocks";
 import { createCommandRegistry } from "./commands";
@@ -64,6 +65,7 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
   let mode: Mode = "explore";
   let page: PageIdentity = resolvePageIdentity(win.location, doc);
   let resolved: ResolvedNote[] = [];
+  let archived: Annotation[] = [];
   let destroyed = false;
   const plugins: AnnotatorPlugin[] = [];
   const cleanups: Array<() => void> = [];
@@ -92,6 +94,8 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
     onDelete: (id) => void deleteNote(id),
     onCopyLink: (id) => void copyNoteLink(id),
     onReattach: (id) => startReanchor(id),
+    onArchive: (id) => void setArchived(id, true).catch((err) => fail(err, "archive")),
+    onUnarchive: (id) => void setArchived(id, false).catch((err) => fail(err, "unarchive")),
   });
 
   // -- notes ------------------------------------------------------------
@@ -105,14 +109,17 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
         emitter.emit("page:change", { page });
       }
       const annotations = await storage.getPage(page);
-      resolved = annotations.map((annotation) => {
+      // Archived notes get no marker, no highlight and no anchor work at all: a
+      // stale archived anchor must never keep the mutation observer awake.
+      archived = annotations.filter(isArchived);
+      resolved = annotations.filter((a) => !isArchived(a)).map((annotation) => {
         const resolution = resolveAnchor(annotation.anchor, doc);
         if (resolution.status === "detached") {
           emitter.emit("anchor:detached", { annotation, reason: resolution.reason });
         }
         return { annotation, resolution };
       });
-      ui.renderNotes(resolved);
+      ui.renderNotes(resolved, archived);
       ensureObserver();
     } catch (err) {
       fail(err, "refresh");
@@ -186,6 +193,15 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
     emitter.emit("note:save", { annotation });
     await refresh();
     return annotation;
+  }
+
+  async function setArchived(id: string, on: boolean): Promise<Annotation> {
+    const existing = await storage.get(id);
+    if (!existing) throw new Error(`Annotation not found: ${id}`);
+    const metadata = { ...existing.metadata };
+    if (on) metadata[ARCHIVED_KEY] = Date.now();
+    else delete metadata[ARCHIVED_KEY];
+    return updateNote(id, { metadata });
   }
 
   async function reanchorNote(id: string, element: Element): Promise<Annotation> {
@@ -492,6 +508,8 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
   commands.register("note.copy-link", (id) => copyNoteLink(String(id)));
   commands.register("note.edit", (id) => editNote(String(id)));
   commands.register("note.reattach", (id) => startReanchor(String(id)));
+  commands.register("note.archive", (id) => setArchived(String(id), true));
+  commands.register("note.unarchive", (id) => setArchived(String(id), false));
 
   // -- public API -------------------------------------------------------------
 
@@ -509,6 +527,9 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
     updateNote,
     reanchorNote,
     deleteNote,
+    archiveNote: (id) => setArchived(id, true),
+    unarchiveNote: (id) => setArchived(id, false),
+    getArchivedNotes: () => archived.slice(),
     getNote: (id) => storage.get(id),
     getPageNotes: (p) => storage.getPage(p ?? page),
     scrollToNote,

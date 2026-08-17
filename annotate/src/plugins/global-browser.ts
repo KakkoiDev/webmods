@@ -1,5 +1,6 @@
 import { NOTE_FRAGMENT_PARAM, SCHEMA_VERSION } from "../types";
 import type { Annotation, AnnotatorPlugin, PageIdentity, PluginContext } from "../types";
+import { isArchived } from "../archive";
 import { collectPages, type PageGroup } from "./portable-data";
 import type { ExportDocument } from "./portable-data";
 import { download } from "../dom-utils";
@@ -312,7 +313,10 @@ export function createGlobalBrowserPlugin(): GlobalBrowserPlugin {
                     const context = document.createElement("div");
                     context.className = "wm-gb-context";
                     const quote = annotation.anchor.textQuote?.exact;
-                    context.textContent = `${formatDate(annotation.updatedAt)}${quote ? ` · ${quote.slice(0, 60)}` : ""}`;
+                    // Archived notes stay searchable here, labelled, so a note
+                    // archived on a page you never revisit is still reachable.
+                    const state = isArchived(annotation) ? "archived · " : "";
+                    context.textContent = `${state}${formatDate(annotation.updatedAt)}${quote ? ` · ${quote.slice(0, 60)}` : ""}`;
                     row.append(excerpt, context);
 
                     row.addEventListener("click", () => {
