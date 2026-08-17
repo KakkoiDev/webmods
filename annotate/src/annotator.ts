@@ -470,6 +470,7 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
       on: (event, handler) => emitter.on(event, handler),
       addSidebarTab: (tab) => ui.addTab(tab),
       addNoteAction: (action) => ui.addNoteAction(action),
+      addHeaderAction: (action) => ui.addHeaderAction(action),
       activateSidebarTab: (id) => {
         ui.openSidebar();
         ui.activateTab(id);

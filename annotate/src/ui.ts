@@ -1,6 +1,6 @@
 import { UI_ATTR } from "./blocks";
 import { renderMarkdown } from "./markdown";
-import type { NoteAction, ResolvedNote, SidebarTab } from "./types";
+import type { HeaderAction, NoteAction, ResolvedNote, SidebarTab } from "./types";
 
 const CSS = `
 :host { all: initial; }
@@ -75,6 +75,8 @@ button.wm-btn.wm-danger { color: #d1242f; }
 }
 .wm-tab[aria-selected="true"] { color: #1f2328; background: #eef1f4; }
 .wm-tab:focus-visible { outline: 2px solid #6366f1; }
+.wm-header-actions { display: flex; gap: 4px; }
+button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
 .wm-sidebar-body { flex: 1; overflow: auto; padding: 10px 12px; }
 .wm-count { font-size: 12px; color: #57606a; margin-bottom: 8px; }
 .wm-note {
@@ -156,6 +158,8 @@ export class AnnotatorUI {
   private hoverTarget: Element | null = null;
   private tabs: SidebarTab[] = [{ id: "notes", label: "Notes", render: () => {} }];
   private noteActions: NoteAction[] = [];
+  private headerActions: HeaderAction[] = [];
+  private headerActionsEl: HTMLElement;
   private activeTab = "notes";
   private tabCleanup: (() => void) | null = null;
   private notes: ResolvedNote[] = [];
@@ -202,6 +206,8 @@ export class AnnotatorUI {
     this.tabBar.className = "wm-sidebar-header";
     this.tabBar.setAttribute("role", "tablist");
     this.sidebar.appendChild(this.tabBar);
+    this.headerActionsEl = doc.createElement("span");
+    this.headerActionsEl.className = "wm-header-actions";
     this.sidebarBody = doc.createElement("div");
     this.sidebarBody.className = "wm-sidebar-body";
     this.sidebar.appendChild(this.sidebarBody);
@@ -542,9 +548,32 @@ export class AnnotatorUI {
     const spacer = this.doc.createElement("span");
     spacer.className = "wm-spacer";
     this.tabBar.appendChild(spacer);
+    this.tabBar.appendChild(this.headerActionsEl);
+    this.renderHeaderActions();
     const close = this.makeButton("✕", "wm-tab", () => this.closeSidebar());
     close.setAttribute("aria-label", "Close sidebar");
     this.tabBar.appendChild(close);
+  }
+
+  addHeaderAction(action: HeaderAction): () => void {
+    this.headerActions.push(action);
+    this.renderHeaderActions();
+    return () => {
+      this.headerActions = this.headerActions.filter((a) => a !== action);
+      this.renderHeaderActions();
+    };
+  }
+
+  private renderHeaderActions(): void {
+    this.headerActionsEl.textContent = "";
+    for (const action of this.headerActions) {
+      if (action.tabs && !action.tabs.includes(this.activeTab)) continue;
+      const btn = this.makeButton(action.label, "wm-btn wm-header-btn", () => action.onClick());
+      btn.dataset.headerActionId = action.id;
+      if (action.title) btn.title = action.title;
+      btn.setAttribute("aria-label", action.title ?? action.label);
+      this.headerActionsEl.appendChild(btn);
+    }
   }
 
   /** Switch the sidebar to a tab by id (falls back to Notes for unknown ids). */
@@ -557,6 +586,7 @@ export class AnnotatorUI {
       btn.setAttribute("aria-selected", String(selected));
       btn.tabIndex = selected ? 0 : -1;
     }
+    this.renderHeaderActions();
     this.sidebarBody.textContent = "";
     if (this.activeTab === "notes") {
       this.renderNotesTab();

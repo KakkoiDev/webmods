@@ -87,6 +87,25 @@ describe("keyboard access", () => {
     expect(after.map((t) => t.tabIndex)).toEqual([-1, 0]);
   });
 
+  it("shows header actions only on the tabs they belong to", () => {
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    annotator.use({
+      name: "extra",
+      setup: (ctx) => {
+        ctx.addSidebarTab({ id: "extra", label: "Extra", render: () => {} });
+        ctx.addHeaderAction({ id: "notes-only", label: "MD", title: "Export this site", tabs: ["notes"], onClick: () => {} });
+        ctx.addHeaderAction({ id: "everywhere", label: "*", onClick: () => {} });
+      },
+    });
+    annotator.openSidebar();
+
+    const ids = () => [...shadow().querySelectorAll<HTMLElement>(".wm-header-btn")].map((b) => b.dataset.headerActionId);
+    expect(ids()).toEqual(["notes-only", "everywhere"]);
+    const tabs = [...shadow().querySelectorAll<HTMLElement>(".wm-tab[role=tab]")];
+    tabs[1].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(ids()).toEqual(["everywhere"]);
+  });
+
   it("exposes activateSidebarTab to plugins", () => {
     annotator = createAnnotator({ storage: createMemoryStorage() });
     annotator.use({

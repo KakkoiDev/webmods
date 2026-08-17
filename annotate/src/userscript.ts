@@ -4,7 +4,6 @@
  * All annotation logic lives in the library.
  */
 import { createAnnotator } from "./annotator";
-import { download } from "./dom-utils";
 import { createChatPlugin } from "./plugins/chat";
 import { createGlobalBrowserPlugin } from "./plugins/global-browser";
 import { createExcalidrawPlugin } from "./plugins/excalidraw";
@@ -72,14 +71,10 @@ export function startUserscript(): void {
     GM_registerMenuCommand("Toggle annotate mode (Alt+Shift+A)", () => annotator.toggle());
     GM_registerMenuCommand("Toggle notes sidebar", () => annotator.toggleSidebar());
     GM_registerMenuCommand("Browse all annotations", () => annotator.commands.execute("browser.open"));
-    GM_registerMenuCommand("Export annotations (JSON)", async () => {
-      const doc = await portable.exportJSON();
-      download(`webmods-annotations-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(doc, null, 2), "application/json");
-    });
-    GM_registerMenuCommand("Export annotations (Markdown)", async () => {
-      const md = await portable.exportMarkdown();
-      download(`webmods-annotations-${new Date().toISOString().slice(0, 10)}.md`, md, "text/markdown");
-    });
+    GM_registerMenuCommand("Export this site (JSON)", () => portable.downloadExport("json", { scope: "site" }));
+    GM_registerMenuCommand("Export this site (Markdown)", () => portable.downloadExport("markdown", { scope: "site" }));
+    GM_registerMenuCommand("Export all sites (JSON)", () => portable.downloadExport("json", { scope: "all" }));
+    GM_registerMenuCommand("Export all sites (Markdown)", () => portable.downloadExport("markdown", { scope: "all" }));
     GM_registerMenuCommand("Configure AI chat…", async () => {
       const currentKind = (await storage.getSetting<string>(CHAT_PROVIDER_SETTING)) ?? "anthropic";
       const kindInput = prompt(

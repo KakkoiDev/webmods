@@ -169,6 +169,16 @@ export interface SidebarTab {
   render(container: HTMLElement): void | (() => void);
 }
 
+/** Small button plugins can add to the sidebar header, next to the tabs. */
+export interface HeaderAction {
+  id: string;
+  label: string;
+  title?: string;
+  /** Tab ids this button shows on; omit for every tab. */
+  tabs?: string[];
+  onClick(): void;
+}
+
 /** Action button plugins can add to every note card in the sidebar. */
 export interface NoteAction {
   id: string;
@@ -183,6 +193,7 @@ export interface PluginContext {
   on<E extends EventName>(event: E, handler: EventHandler<E>): () => void;
   addSidebarTab(tab: SidebarTab): () => void;
   addNoteAction(action: NoteAction): () => void;
+  addHeaderAction(action: HeaderAction): () => void;
   /** Open the sidebar on a specific tab (e.g. one this plugin registered). */
   activateSidebarTab(id: string): void;
   getPage(): PageIdentity;

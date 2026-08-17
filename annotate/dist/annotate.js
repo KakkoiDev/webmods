@@ -54,6 +54,8 @@ var WebmodsAnnotate = (() => {
     createTampermonkeyStorage: () => createTampermonkeyStorage,
     download: () => download,
     emptyDB: () => emptyDB,
+    exportFilename: () => exportFilename,
+    filterPagesByScope: () => filterPagesByScope,
     generateId: () => generateId,
     hashString: () => hashString,
     indexedDBStorage: () => createIndexedDBStorage,
@@ -1188,6 +1190,8 @@ button.wm-btn.wm-danger { color: #d1242f; }
 }
 .wm-tab[aria-selected="true"] { color: #1f2328; background: #eef1f4; }
 .wm-tab:focus-visible { outline: 2px solid #6366f1; }
+.wm-header-actions { display: flex; gap: 4px; }
+button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
 .wm-sidebar-body { flex: 1; overflow: auto; padding: 10px 12px; }
 .wm-count { font-size: 12px; color: #57606a; margin-bottom: 8px; }
 .wm-note {
@@ -1242,6 +1246,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
       this.tabs = [{ id: "notes", label: "Notes", render: () => {
       } }];
       this.noteActions = [];
+      this.headerActions = [];
       this.activeTab = "notes";
       this.tabCleanup = null;
       this.notes = [];
@@ -1278,6 +1283,8 @@ button.wm-btn.wm-danger { color: #d1242f; }
       this.tabBar.className = "wm-sidebar-header";
       this.tabBar.setAttribute("role", "tablist");
       this.sidebar.appendChild(this.tabBar);
+      this.headerActionsEl = doc.createElement("span");
+      this.headerActionsEl.className = "wm-header-actions";
       this.sidebarBody = doc.createElement("div");
       this.sidebarBody.className = "wm-sidebar-body";
       this.sidebar.appendChild(this.sidebarBody);
@@ -1567,9 +1574,30 @@ button.wm-btn.wm-danger { color: #d1242f; }
       const spacer = this.doc.createElement("span");
       spacer.className = "wm-spacer";
       this.tabBar.appendChild(spacer);
+      this.tabBar.appendChild(this.headerActionsEl);
+      this.renderHeaderActions();
       const close = this.makeButton("\u2715", "wm-tab", () => this.closeSidebar());
       close.setAttribute("aria-label", "Close sidebar");
       this.tabBar.appendChild(close);
+    }
+    addHeaderAction(action) {
+      this.headerActions.push(action);
+      this.renderHeaderActions();
+      return () => {
+        this.headerActions = this.headerActions.filter((a) => a !== action);
+        this.renderHeaderActions();
+      };
+    }
+    renderHeaderActions() {
+      this.headerActionsEl.textContent = "";
+      for (const action of this.headerActions) {
+        if (action.tabs && !action.tabs.includes(this.activeTab)) continue;
+        const btn = this.makeButton(action.label, "wm-btn wm-header-btn", () => action.onClick());
+        btn.dataset.headerActionId = action.id;
+        if (action.title) btn.title = action.title;
+        btn.setAttribute("aria-label", action.title ?? action.label);
+        this.headerActionsEl.appendChild(btn);
+      }
     }
     /** Switch the sidebar to a tab by id (falls back to Notes for unknown ids). */
     activateTab(id) {
@@ -1581,6 +1609,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
         btn.setAttribute("aria-selected", String(selected));
         btn.tabIndex = selected ? 0 : -1;
       }
+      this.renderHeaderActions();
       this.sidebarBody.textContent = "";
       if (this.activeTab === "notes") {
         this.renderNotesTab();
@@ -2046,6 +2075,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
         on: (event, handler) => emitter.on(event, handler),
         addSidebarTab: (tab) => ui.addTab(tab),
         addNoteAction: (action) => ui.addNoteAction(action),
+        addHeaderAction: (action) => ui.addHeaderAction(action),
         activateSidebarTab: (id) => {
           ui.openSidebar();
           ui.activateTab(id);
@@ -2158,34 +2188,80 @@ button.wm-btn.wm-danger { color: #d1242f; }
     }
     return [{ identity: currentPage, annotations: await storage.getPage(currentPage) }];
   }
+  function hostOf(url) {
+    try {
+      return new URL(url).host || null;
+    } catch {
+      return null;
+    }
+  }
+  function filterPagesByScope(pages, current, scope) {
+    if (scope === "all") return pages;
+    if (scope === "page") return pages.filter((p) => p.identity.id === current.id);
+    const host = hostOf(current.normalizedUrl) ?? hostOf(current.url);
+    if (!host) return pages.filter((p) => p.identity.id === current.id);
+    return pages.filter((p) => (hostOf(p.identity.normalizedUrl) ?? hostOf(p.identity.url)) === host);
+  }
+  function exportFilename(scope, current, extension, today = /* @__PURE__ */ new Date()) {
+    const host = scope === "all" ? "all" : hostOf(current.normalizedUrl) ?? hostOf(current.url) ?? "page";
+    return `webmods-annotations-${host}-${today.toISOString().slice(0, 10)}.${extension}`;
+  }
   function createPortableDataPlugin() {
     let ctx = null;
+    const cleanups = [];
     const requireCtx = () => {
       if (!ctx) throw new Error("portable-data plugin is not attached to an annotator (call annotator.use(plugin) first)");
       return ctx;
     };
-    async function collectOwnPages() {
+    async function collectOwnPages(scope = "all") {
       const { storage, getPage } = requireCtx();
-      return collectPages(storage, getPage());
+      const current = getPage();
+      return filterPagesByScope(await collectPages(storage, current), current, scope);
     }
     const plugin = {
       name: "portable-data",
       setup(pluginCtx) {
         ctx = pluginCtx;
-        pluginCtx.commands.register("export.json", () => plugin.exportJSON());
-        pluginCtx.commands.register("export.markdown", () => plugin.exportMarkdown());
+        pluginCtx.commands.register("export.json", (opts) => plugin.exportJSON(opts));
+        pluginCtx.commands.register("export.markdown", (opts) => plugin.exportMarkdown(opts));
         pluginCtx.commands.register("import.json", (data) => plugin.importJSON(data));
+        for (const [tab, scope, what] of [
+          ["notes", "site", "this site"],
+          ["all-pages", "all", "every site"]
+        ]) {
+          for (const format of ["markdown", "json"]) {
+            cleanups.push(
+              pluginCtx.addHeaderAction({
+                id: `export-${scope}-${format}`,
+                label: format === "json" ? "JSON" : "MD",
+                title: `Export notes from ${what} as ${format === "json" ? "JSON" : "Markdown"}`,
+                tabs: [tab],
+                onClick: () => void plugin.downloadExport(format, { scope })
+              })
+            );
+          }
+        }
       },
       destroy() {
+        for (const off of cleanups.splice(0)) off();
         ctx = null;
       },
-      async exportJSON() {
+      async exportJSON(opts = {}) {
         return {
           format: "wm-annotate-export",
           schemaVersion: SCHEMA_VERSION,
           exportedAt: Date.now(),
-          pages: await collectOwnPages()
+          pages: await collectOwnPages(opts.scope ?? "all")
         };
+      },
+      async downloadExport(format, opts = {}) {
+        const scope = opts.scope ?? "all";
+        const name = exportFilename(scope, requireCtx().getPage(), format === "json" ? "json" : "md");
+        if (format === "json") {
+          download(name, JSON.stringify(await plugin.exportJSON(opts), null, 2), "application/json");
+        } else {
+          download(name, await plugin.exportMarkdown(opts), "text/markdown");
+        }
       },
       async importJSON(data, strategy = "skip") {
         const parsed = typeof data === "string" ? JSON.parse(data) : data;
@@ -2230,8 +2306,8 @@ button.wm-btn.wm-danger { color: #d1242f; }
         await annotator.refresh();
         return result;
       },
-      async exportMarkdown() {
-        const pages = await collectOwnPages();
+      async exportMarkdown(opts = {}) {
+        const pages = await collectOwnPages(opts.scope ?? "all");
         const sections = [];
         for (const { identity, annotations } of pages) {
           if (!annotations.length) continue;
@@ -2288,7 +2364,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
 
   // src/plugins/global-browser.ts
   var MAX_RESULTS = 5e3;
-  function hostOf(url) {
+  function hostOf2(url) {
     try {
       return new URL(url).host.toLowerCase();
     } catch {
@@ -2322,7 +2398,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     const { tokens, sites } = parseQuery(query);
     const results = [];
     for (const { identity, annotations } of pages) {
-      if (sites.length && !sites.every((s) => hostOf(identity.normalizedUrl).includes(s))) continue;
+      if (sites.length && !sites.every((s) => hostOf2(identity.normalizedUrl).includes(s))) continue;
       for (const annotation of annotations) {
         const values = fieldValues(identity, annotation);
         const matchesAll = tokens.every((token) => FIELD_ORDER.some((field) => values[field].includes(token)));
@@ -2401,7 +2477,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
         exportedAt: Date.now(),
         pages: [group]
       };
-      const slug = (group.identity.title || hostOf(group.identity.normalizedUrl) || "page").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+      const slug = (group.identity.title || hostOf2(group.identity.normalizedUrl) || "page").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
       download(`webmods-annotations-${slug || "page"}.json`, JSON.stringify(doc, null, 2), "application/json");
     }
     const plugin = {
@@ -2489,7 +2565,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
                   toggle.textContent = identity.title || identity.normalizedUrl;
                   const host = document.createElement("span");
                   host.className = "wm-gb-host";
-                  host.textContent = ` \u2014 ${hostOf(identity.normalizedUrl)}`;
+                  host.textContent = ` \u2014 ${hostOf2(identity.normalizedUrl)}`;
                   toggle.appendChild(host);
                   toggle.addEventListener("click", () => {
                     if (collapsed.has(pageId)) {

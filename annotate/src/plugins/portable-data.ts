@@ -1,3 +1,4 @@
+import { download } from "../dom-utils";
 import type { Annotation, AnnotationStorage, AnnotatorPlugin, PageIdentity, PluginContext } from "../types";
 import { INLINE_FRAGMENT_PARAM, SCHEMA_VERSION } from "../types";
 
@@ -69,10 +70,19 @@ function base64UrlDecode(encoded: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+/** "page" = this page, "site" = every page on this host, "all" = everything stored. */
+export type ExportScope = "page" | "site" | "all";
+
+export interface ExportOptions {
+  scope?: ExportScope;
+}
+
 export interface PortableDataAPI {
-  exportJSON(): Promise<ExportDocument>;
+  exportJSON(opts?: ExportOptions): Promise<ExportDocument>;
   importJSON(data: unknown, strategy?: CollisionStrategy): Promise<ImportResult>;
-  exportMarkdown(): Promise<string>;
+  exportMarkdown(opts?: ExportOptions): Promise<string>;
+  /** Export and hand the file to the user in one step. */
+  downloadExport(format: "json" | "markdown", opts?: ExportOptions): Promise<void>;
   createInlineURL(annotation: Annotation, page: PageIdentity): string;
   parseInlineFragment(hash: string): { page: PageIdentity; annotation: Annotation } | null;
 }
@@ -110,17 +120,42 @@ export async function collectPages(storage: AnnotationStorage, currentPage: Page
   return [{ identity: currentPage, annotations: await storage.getPage(currentPage) }];
 }
 
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).host || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Narrow collected pages to an export scope. An unparseable current URL degrades to this page. */
+export function filterPagesByScope(pages: PageGroup[], current: PageIdentity, scope: ExportScope): PageGroup[] {
+  if (scope === "all") return pages;
+  if (scope === "page") return pages.filter((p) => p.identity.id === current.id);
+  const host = hostOf(current.normalizedUrl) ?? hostOf(current.url);
+  if (!host) return pages.filter((p) => p.identity.id === current.id);
+  return pages.filter((p) => (hostOf(p.identity.normalizedUrl) ?? hostOf(p.identity.url)) === host);
+}
+
+/** e.g. webmods-annotations-app.notion.com-2026-08-18.md */
+export function exportFilename(scope: ExportScope, current: PageIdentity, extension: string, today = new Date()): string {
+  const host = scope === "all" ? "all" : hostOf(current.normalizedUrl) ?? hostOf(current.url) ?? "page";
+  return `webmods-annotations-${host}-${today.toISOString().slice(0, 10)}.${extension}`;
+}
+
 export function createPortableDataPlugin(): PortableDataPlugin {
   let ctx: PluginContext | null = null;
+  const cleanups: Array<() => void> = [];
 
   const requireCtx = (): PluginContext => {
     if (!ctx) throw new Error("portable-data plugin is not attached to an annotator (call annotator.use(plugin) first)");
     return ctx;
   };
 
-  async function collectOwnPages(): Promise<ExportDocument["pages"]> {
+  async function collectOwnPages(scope: ExportScope = "all"): Promise<ExportDocument["pages"]> {
     const { storage, getPage } = requireCtx();
-    return collectPages(storage, getPage());
+    const current = getPage();
+    return filterPagesByScope(await collectPages(storage, current), current, scope);
   }
 
   const plugin: PortableDataPlugin = {
@@ -128,22 +163,52 @@ export function createPortableDataPlugin(): PortableDataPlugin {
 
     setup(pluginCtx) {
       ctx = pluginCtx;
-      pluginCtx.commands.register("export.json", () => plugin.exportJSON());
-      pluginCtx.commands.register("export.markdown", () => plugin.exportMarkdown());
+      pluginCtx.commands.register("export.json", (opts) => plugin.exportJSON(opts as ExportOptions | undefined));
+      pluginCtx.commands.register("export.markdown", (opts) => plugin.exportMarkdown(opts as ExportOptions | undefined));
       pluginCtx.commands.register("import.json", (data) => plugin.importJSON(data));
+
+      // One-click exports in the sidebar header: the Notes tab exports this site,
+      // the All pages tab exports everything, so the scope matches what is on screen.
+      for (const [tab, scope, what] of [
+        ["notes", "site", "this site"],
+        ["all-pages", "all", "every site"],
+      ] as Array<[string, ExportScope, string]>) {
+        for (const format of ["markdown", "json"] as const) {
+          cleanups.push(
+            pluginCtx.addHeaderAction({
+              id: `export-${scope}-${format}`,
+              label: format === "json" ? "JSON" : "MD",
+              title: `Export notes from ${what} as ${format === "json" ? "JSON" : "Markdown"}`,
+              tabs: [tab],
+              onClick: () => void plugin.downloadExport(format, { scope }),
+            })
+          );
+        }
+      }
     },
 
     destroy() {
+      for (const off of cleanups.splice(0)) off();
       ctx = null;
     },
 
-    async exportJSON(): Promise<ExportDocument> {
+    async exportJSON(opts: ExportOptions = {}): Promise<ExportDocument> {
       return {
         format: "wm-annotate-export",
         schemaVersion: SCHEMA_VERSION,
         exportedAt: Date.now(),
-        pages: await collectOwnPages(),
+        pages: await collectOwnPages(opts.scope ?? "all"),
       };
+    },
+
+    async downloadExport(format: "json" | "markdown", opts: ExportOptions = {}): Promise<void> {
+      const scope = opts.scope ?? "all";
+      const name = exportFilename(scope, requireCtx().getPage(), format === "json" ? "json" : "md");
+      if (format === "json") {
+        download(name, JSON.stringify(await plugin.exportJSON(opts), null, 2), "application/json");
+      } else {
+        download(name, await plugin.exportMarkdown(opts), "text/markdown");
+      }
     },
 
     async importJSON(data: unknown, strategy: CollisionStrategy = "skip"): Promise<ImportResult> {
@@ -191,8 +256,8 @@ export function createPortableDataPlugin(): PortableDataPlugin {
       return result;
     },
 
-    async exportMarkdown(): Promise<string> {
-      const pages = await collectOwnPages();
+    async exportMarkdown(opts: ExportOptions = {}): Promise<string> {
+      const pages = await collectOwnPages(opts.scope ?? "all");
       const sections: string[] = [];
       for (const { identity, annotations } of pages) {
         if (!annotations.length) continue;
