@@ -1,6 +1,13 @@
 import { isArchived } from "../archive";
 import { download } from "../dom-utils";
-import type { Annotation, AnnotationStorage, AnnotatorPlugin, PageIdentity, PluginContext } from "../types";
+import type {
+  Annotation,
+  AnnotationStorage,
+  AnnotatorPlugin,
+  HeaderActionItem,
+  PageIdentity,
+  PluginContext,
+} from "../types";
 import { INLINE_FRAGMENT_PARAM, SCHEMA_VERSION } from "../types";
 
 export interface ExportDocument {
@@ -190,24 +197,32 @@ export function createPortableDataPlugin(): PortableDataPlugin {
       pluginCtx.commands.register("export.markdown", (opts) => plugin.exportMarkdown(opts as ExportOptions | undefined));
       pluginCtx.commands.register("import.json", (data) => plugin.importJSON(data));
 
-      // One-click exports in the sidebar header: the Notes tab exports this site,
-      // the All pages tab exports everything, so the scope matches what is on screen.
-      for (const [tab, scope, what] of [
-        ["notes", "site", "this site"],
-        ["all-pages", "all", "every site"],
-      ] as Array<[string, ExportScope, string]>) {
-        for (const format of ["markdown", "json"] as const) {
-          cleanups.push(
-            pluginCtx.addHeaderAction({
-              id: `export-${scope}-${format}`,
-              label: format === "json" ? "JSON" : "MD",
-              title: `Export notes from ${what} as ${format === "json" ? "JSON" : "Markdown"}`,
-              tabs: [tab],
-              onClick: () => void plugin.downloadExport(format, { scope }),
-            })
-          );
-        }
-      }
+      // One Export dropdown in the sidebar header. Every entry names its own
+      // scope, so no export can be fired without seeing what it covers.
+      cleanups.push(
+        pluginCtx.addHeaderAction({
+          id: "export",
+          label: "Export",
+          title: "Export notes",
+          items: () => {
+            // A page with no resolvable host (file://, about:) gets no parenthetical.
+            const host = hostOf(pluginCtx.getPage().normalizedUrl);
+            const named = host ? ` (${host})` : "";
+            const entries: HeaderActionItem[] = [{ group: `This site${named}` }];
+            for (const [scope, where] of [
+              ["site", `this site${named}`],
+              ["all", "all sites"],
+            ] as Array<[ExportScope, string]>) {
+              if (scope === "all") entries.push({ group: "All sites" });
+              entries.push(
+                { label: `Markdown, ${where}`, onClick: () => void plugin.downloadExport("markdown", { scope }) },
+                { label: `JSON, ${where}`, onClick: () => void plugin.downloadExport("json", { scope }) }
+              );
+            }
+            return entries;
+          },
+        })
+      );
     },
 
     destroy() {

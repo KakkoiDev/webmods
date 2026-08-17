@@ -171,6 +171,14 @@ export interface SidebarTab {
   render(container: HTMLElement): void | (() => void);
 }
 
+/** One row of a header-action dropdown: either a group heading or a command. */
+export interface HeaderActionItem {
+  /** Non-interactive heading; when set, label and onClick are ignored. */
+  group?: string;
+  label?: string;
+  onClick?(): void;
+}
+
 /** Small button plugins can add to the sidebar header, next to the tabs. */
 export interface HeaderAction {
   id: string;
@@ -178,7 +186,10 @@ export interface HeaderAction {
   title?: string;
   /** Tab ids this button shows on; omit for every tab. */
   tabs?: string[];
-  onClick(): void;
+  /** Present for a dropdown button. Called on every open, so labels stay current. */
+  items?(): HeaderActionItem[];
+  /** Used when there is no dropdown. */
+  onClick?(): void;
 }
 
 /** Action button plugins can add to every note card in the sidebar. */

@@ -155,13 +155,17 @@ describe("portable-data plugin", () => {
     expect(exportFilename("all", page, "json", day)).toBe("webmods-annotations-all-2026-08-18.json");
   });
 
-  it("adds one-click export buttons to the Notes and All pages tabs", () => {
+  it("offers one Export dropdown whose entries name their scope", () => {
     const { headerActions } = attach();
-    expect(headerActions.map((a) => `${a.tabs?.join()}:${a.label}`)).toEqual([
-      "notes:MD",
-      "notes:JSON",
-      "all-pages:MD",
-      "all-pages:JSON",
+    expect(headerActions.map((a) => a.id)).toEqual(["export"]);
+    const items = headerActions[0].items!().map((i) => i.group ?? i.label);
+    expect(items).toEqual([
+      "This site (example.com)",
+      "Markdown, this site (example.com)",
+      "JSON, this site (example.com)",
+      "All sites",
+      "Markdown, all sites",
+      "JSON, all sites",
     ]);
   });
 

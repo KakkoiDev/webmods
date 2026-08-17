@@ -143,6 +143,67 @@ describe("keyboard access", () => {
     expect(ids()).toEqual(["everywhere"]);
   });
 
+  it("mirrors annotate mode on the sidebar header switch", () => {
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    annotator.openSidebar();
+    const headerSwitch = () => shadow().querySelector<HTMLElement>(".wm-header-switch [role=switch]")!;
+    expect(headerSwitch().getAttribute("aria-checked")).toBe("false");
+
+    headerSwitch().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(annotator.getMode()).toBe("annotate");
+    // Both copies of the switch follow the mode, wherever it was changed.
+    const switches = [...shadow().querySelectorAll("[role=switch]")].map((s) => s.getAttribute("aria-checked"));
+    expect(switches).toEqual(["true", "true"]);
+
+    annotator.exit();
+    expect(headerSwitch().getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("opens a header dropdown and closes it on Escape or an outside click", () => {
+    const picked: string[] = [];
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    annotator.use({
+      name: "menu",
+      setup: (ctx) =>
+        void ctx.addHeaderAction({
+          id: "export",
+          label: "Export",
+          items: () => [
+            { group: "This site (example.com)" },
+            { label: "Markdown, this site", onClick: () => picked.push("md") },
+          ],
+        }),
+    });
+    annotator.openSidebar();
+
+    const owner = () => shadow().querySelector<HTMLElement>('[data-header-action-id="export"]')!;
+    expect(owner().textContent).toContain("Export");
+    expect(shadow().querySelector(".wm-menu")).toBeNull();
+
+    owner().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(owner().getAttribute("aria-expanded")).toBe("true");
+    expect([...shadow().querySelectorAll(".wm-menu-group, .wm-menu button")].map((e) => e.textContent)).toEqual([
+      "This site (example.com)",
+      "Markdown, this site",
+    ]);
+
+    shadow().querySelector<HTMLElement>(".wm-menu button")!.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true })
+    );
+    expect(picked).toEqual(["md"]);
+    expect(shadow().querySelector(".wm-menu")).toBeNull();
+    expect(owner().getAttribute("aria-expanded")).toBe("false");
+
+    owner().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    shadow().querySelector(".wm-menu")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(shadow().querySelector(".wm-menu")).toBeNull();
+
+    owner().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(shadow().querySelector(".wm-menu")).not.toBeNull();
+    document.body.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(shadow().querySelector(".wm-menu")).toBeNull();
+  });
+
   it("exposes activateSidebarTab to plugins", () => {
     annotator = createAnnotator({ storage: createMemoryStorage() });
     annotator.use({

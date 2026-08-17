@@ -1196,7 +1196,21 @@ button.wm-btn.wm-danger { color: #d1242f; }
 .wm-sidebar.wm-left { left: 0; right: auto; border-left: 0; border-right: 1px solid #d0d7de; box-shadow: 4px 0 16px rgba(0,0,0,0.12); }
 .wm-sidebar.wm-right { right: 0; }
 .wm-sidebar.wm-open { display: flex; }
-.wm-sidebar-header { display: flex; align-items: center; gap: 4px; padding: 10px 12px; border-bottom: 1px solid #d0d7de; }
+.wm-sidebar-header { position: relative; display: flex; align-items: center; gap: 4px; padding: 10px 12px; border-bottom: 1px solid #d0d7de; }
+.wm-header-switch { display: flex; align-items: center; gap: 5px; }
+.wm-header-switch > span { font-size: 11.5px; color: #57606a; }
+.wm-menu {
+  position: absolute; top: 100%; right: 10px; z-index: 3; min-width: 236px;
+  background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 4px;
+  box-shadow: 0 6px 20px rgba(31,35,40,0.16);
+}
+.wm-menu button {
+  display: block; width: 100%; text-align: left; font: inherit; font-size: 12px; cursor: pointer;
+  border: 0; background: none; color: #1f2328; padding: 5px 8px; border-radius: 6px;
+}
+.wm-menu button:hover { background: #f6f8fa; }
+.wm-menu button:focus-visible { outline: 2px solid #6366f1; }
+.wm-menu-group { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #57606a; padding: 6px 8px 2px; }
 .wm-tab {
   font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
   border: 0; background: none; padding: 4px 8px; border-radius: 6px; color: #57606a;
@@ -1290,8 +1304,10 @@ button.wm-corner-sidebar { width: 100%; }
       this.tabCleanup = null;
       this.notes = [];
       this.archived = [];
+      this.annotateOn = false;
+      this.menuEl = null;
+      this.closeMenuListener = null;
       this.cornerEl = null;
-      this.cornerSwitch = null;
       this.cornerTimer = null;
       this.repositionScheduled = false;
       this.listeners = [];
@@ -1343,6 +1359,20 @@ button.wm-corner-sidebar { width: 100%; }
         this.listeners.push(() => win.removeEventListener("resize", reposition));
       }
     }
+    /** Annotate-mode switch. Every copy stays in step with the mode via setModeIndicator. */
+    makeModeSwitch() {
+      const toggle = this.doc.createElement("button");
+      toggle.type = "button";
+      toggle.className = "wm-switch";
+      toggle.setAttribute("role", "switch");
+      toggle.setAttribute("aria-checked", String(this.annotateOn));
+      toggle.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.noteCallbacks.onToggleMode();
+      });
+      return toggle;
+    }
     buildCornerWidget() {
       const corner = this.doc.createElement("div");
       corner.className = "wm-corner";
@@ -1354,17 +1384,8 @@ button.wm-corner-sidebar { width: 100%; }
       label.className = "wm-corner-label";
       label.id = "wm-corner-mode-label";
       label.textContent = "Edit mode";
-      const toggle = this.doc.createElement("button");
-      toggle.type = "button";
-      toggle.className = "wm-switch";
-      toggle.setAttribute("role", "switch");
-      toggle.setAttribute("aria-checked", "false");
+      const toggle = this.makeModeSwitch();
       toggle.setAttribute("aria-labelledby", label.id);
-      toggle.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.noteCallbacks.onToggleMode();
-      });
       row.append(label, toggle);
       const sidebarBtn = this.makeButton(
         "Notes sidebar",
@@ -1374,7 +1395,6 @@ button.wm-corner-sidebar { width: 100%; }
       corner.append(row, sidebarBtn);
       this.layer.appendChild(corner);
       this.cornerEl = corner;
-      this.cornerSwitch = toggle;
       this.positionCorner();
       const onMove = (e) => this.trackCorner(e.clientX, e.clientY);
       this.doc.addEventListener("pointermove", onMove, { capture: true, passive: true });
@@ -1428,6 +1448,7 @@ button.wm-corner-sidebar { width: 100%; }
       }, CORNER_HIDE_MS);
     }
     destroy() {
+      this.closeMenu();
       for (const off of this.listeners) off();
       this.listeners = [];
       this.tabCleanup?.();
@@ -1444,7 +1465,10 @@ button.wm-corner-sidebar { width: 100%; }
       this.hoverBox.style.display = "block";
     }
     setModeIndicator(on, text) {
-      if (text === void 0) this.cornerSwitch?.setAttribute("aria-checked", String(on));
+      if (text === void 0) {
+        this.annotateOn = on;
+        for (const sw of this.root.querySelectorAll(".wm-switch")) sw.setAttribute("aria-checked", String(on));
+      }
       this.modePill.textContent = text ?? MODE_TEXT_DEFAULT;
       this.modePill.style.display = on ? "block" : "none";
       this.announce(on ? text ?? "Annotation mode on" : "Annotation mode off");
@@ -1706,6 +1730,15 @@ button.wm-corner-sidebar { width: 100%; }
       const spacer = this.doc.createElement("span");
       spacer.className = "wm-spacer";
       this.tabBar.appendChild(spacer);
+      const modeGroup = this.doc.createElement("span");
+      modeGroup.className = "wm-header-switch";
+      const modeLabel = this.doc.createElement("span");
+      modeLabel.textContent = "Edit";
+      const modeSwitch = this.makeModeSwitch();
+      modeSwitch.setAttribute("aria-label", "Edit mode");
+      modeSwitch.title = "Annotate mode (Alt+Shift+A)";
+      modeGroup.append(modeLabel, modeSwitch);
+      this.tabBar.appendChild(modeGroup);
       this.tabBar.appendChild(this.headerActionsEl);
       this.renderHeaderActions();
       const close = this.makeButton("\u2715", "wm-tab", () => this.closeSidebar());
@@ -1721,15 +1754,79 @@ button.wm-corner-sidebar { width: 100%; }
       };
     }
     renderHeaderActions() {
+      this.closeMenu();
       this.headerActionsEl.textContent = "";
       for (const action of this.headerActions) {
         if (action.tabs && !action.tabs.includes(this.activeTab)) continue;
-        const btn = this.makeButton(action.label, "wm-btn wm-header-btn", () => action.onClick());
+        const items = action.items;
+        const btn = this.makeButton(
+          items ? `${action.label} \u25BE` : action.label,
+          "wm-btn wm-header-btn",
+          () => items ? this.toggleMenu(btn, items()) : action.onClick?.()
+        );
         btn.dataset.headerActionId = action.id;
         if (action.title) btn.title = action.title;
         btn.setAttribute("aria-label", action.title ?? action.label);
+        if (items) {
+          btn.setAttribute("aria-haspopup", "menu");
+          btn.setAttribute("aria-expanded", "false");
+        }
         this.headerActionsEl.appendChild(btn);
       }
+    }
+    toggleMenu(owner, items) {
+      if (this.menuEl) {
+        this.closeMenu();
+        return;
+      }
+      const menu = this.doc.createElement("div");
+      menu.className = "wm-menu";
+      menu.setAttribute("role", "menu");
+      for (const item of items) {
+        if (item.group) {
+          const head = this.doc.createElement("div");
+          head.className = "wm-menu-group";
+          head.textContent = item.group;
+          menu.appendChild(head);
+          continue;
+        }
+        const entry = this.doc.createElement("button");
+        entry.type = "button";
+        entry.setAttribute("role", "menuitem");
+        entry.textContent = item.label ?? "";
+        entry.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.closeMenu();
+          item.onClick?.();
+        });
+        menu.appendChild(entry);
+      }
+      menu.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        e.stopPropagation();
+        this.closeMenu();
+        owner.focus();
+      });
+      this.tabBar.appendChild(menu);
+      this.menuEl = menu;
+      owner.setAttribute("aria-expanded", "true");
+      const dismiss = (e) => {
+        if (e.composedPath().includes(menu) || e.composedPath().includes(owner)) return;
+        this.closeMenu();
+      };
+      this.doc.addEventListener("click", dismiss, true);
+      this.closeMenuListener = () => {
+        this.doc.removeEventListener("click", dismiss, true);
+        owner.setAttribute("aria-expanded", "false");
+      };
+      menu.querySelector("button")?.focus();
+    }
+    closeMenu() {
+      this.menuEl?.remove();
+      this.menuEl = null;
+      this.closeMenuListener?.();
+      this.closeMenuListener = null;
     }
     /** Switch the sidebar to a tab by id (falls back to Notes for unknown ids). */
     activateTab(id) {
@@ -2415,22 +2512,29 @@ button.wm-corner-sidebar { width: 100%; }
         pluginCtx.commands.register("export.json", (opts) => plugin.exportJSON(opts));
         pluginCtx.commands.register("export.markdown", (opts) => plugin.exportMarkdown(opts));
         pluginCtx.commands.register("import.json", (data) => plugin.importJSON(data));
-        for (const [tab, scope, what] of [
-          ["notes", "site", "this site"],
-          ["all-pages", "all", "every site"]
-        ]) {
-          for (const format of ["markdown", "json"]) {
-            cleanups.push(
-              pluginCtx.addHeaderAction({
-                id: `export-${scope}-${format}`,
-                label: format === "json" ? "JSON" : "MD",
-                title: `Export notes from ${what} as ${format === "json" ? "JSON" : "Markdown"}`,
-                tabs: [tab],
-                onClick: () => void plugin.downloadExport(format, { scope })
-              })
-            );
-          }
-        }
+        cleanups.push(
+          pluginCtx.addHeaderAction({
+            id: "export",
+            label: "Export",
+            title: "Export notes",
+            items: () => {
+              const host = hostOf(pluginCtx.getPage().normalizedUrl);
+              const named = host ? ` (${host})` : "";
+              const entries = [{ group: `This site${named}` }];
+              for (const [scope, where] of [
+                ["site", `this site${named}`],
+                ["all", "all sites"]
+              ]) {
+                if (scope === "all") entries.push({ group: "All sites" });
+                entries.push(
+                  { label: `Markdown, ${where}`, onClick: () => void plugin.downloadExport("markdown", { scope }) },
+                  { label: `JSON, ${where}`, onClick: () => void plugin.downloadExport("json", { scope }) }
+                );
+              }
+              return entries;
+            }
+          })
+        );
       },
       destroy() {
         for (const off of cleanups.splice(0)) off();
