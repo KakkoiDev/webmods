@@ -683,11 +683,23 @@ JSON is the canonical portable representation.
 Plugin capabilities:
 
 ```ts
-exportJSON()
+exportJSON(opts?)
 importJSON(data)
-exportMarkdown()
+exportMarkdown(opts?)
+downloadExport(format, opts?)
 createInlineURL(annotation)
 ```
+
+Export scope, via `opts.scope`:
+
+```text
+"page"  only the current page
+"site"  every stored page on the current host
+"all"   everything stored (default)
+```
+
+The notes sidebar carries one-click MD and JSON buttons in its header. Their
+scope follows the visible tab: "site" on Notes, "all" on All pages.
 
 ### JSON export
 
@@ -948,6 +960,7 @@ interface AnnotatorOptions {
     sidebar?: boolean;
     position?: "left" | "right";
     showMarkers?: boolean;
+    cornerWidget?: boolean;
   };
 
   anchors?: {
@@ -970,6 +983,37 @@ const annotator = createAnnotator();
 
 ---
 
+## 29b. Archived notes
+
+Archiving keeps a note but takes it out of the way.
+
+- state lives in `metadata.archived` as a timestamp, so no schema change;
+- archived notes get no marker, no range highlight, and no anchor resolution;
+- they leave the page note count and sit behind an `Archived (n)` disclosure
+  in the Notes tab, each offering Restore and Delete;
+- JSON export keeps them with the flag, so backup and restore never drops or
+  silently revives notes; Markdown export moves them to a trailing
+  `# Archived` section;
+- the All pages tab still lists them, labelled `archived`, so a note archived
+  on a page you never revisit stays reachable.
+
+---
+
+## 29c. Corner widget
+
+A small panel in the bottom-right corner, revealed by the pointer resting in a
+22x22 hotspot for 250ms and hidden 400ms after it leaves.
+
+- an `Edit mode` switch mirroring the annotate mode shortcut both ways;
+- a button that toggles the notes sidebar;
+- lives in the annotator's own shadow layer, so it is never annotatable;
+- hides while a fullscreen element is present, and shifts clear of an open
+  right-hand sidebar;
+- `ui.cornerWidget: false` removes it. Bottom-right is deliberate: top-right is
+  where most applications keep their own controls.
+
+---
+
 ## 30. Commands
 
 Internally, expose actions in a way plugins/UI can invoke consistently.
@@ -986,6 +1030,8 @@ note.delete
 note.copy-link
 note.scroll-to
 sidebar.toggle
+note.archive
+note.unarchive
 export.json
 export.markdown
 import.json
