@@ -243,6 +243,48 @@ describe("shortcuts inside editors", () => {
     expect(annotator.getMode()).toBe("explore");
   });
 
+  // Notion answers a Backspace it can see by deleting from its own block and
+  // pulling focus out of the note, because shadow DOM retargets the keystroke to
+  // the host element. Keys typed in the composer must not reach the page at all.
+  it("keeps composer keystrokes away from page-level handlers", () => {
+    document.body.innerHTML = `
+      <div id="editor" contenteditable="true">
+        <div id="block">Add the Order and OrderLine models with their migration.</div>
+        <div>${"Body text that makes this editable root document-sized. ".repeat(12)}</div>
+      </div>
+    `;
+    fakeContentEditable();
+    Element.prototype.getBoundingClientRect = function () {
+      const height = Math.max(20, Math.min(600, (this.textContent || "").length / 2));
+      return { top: 100, left: 0, right: 600, bottom: 100 + height, width: 600, height, x: 0, y: 100, toJSON: () => ({}) } as DOMRect;
+    };
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    annotator.enter();
+    document.getElementById("block")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+
+    const seen: string[] = [];
+    const capture = (e: Event) => seen.push(`capture:${e.type}`);
+    const bubble = (e: Event) => seen.push(`bubble:${e.type}`);
+    for (const type of ["keydown", "keyup", "keypress"]) {
+      document.addEventListener(type, capture, true);
+      document.addEventListener(type, bubble, false);
+    }
+    try {
+      const textarea = document.querySelector("[data-wm-annotate-ui]")!.shadowRoot!.querySelector("textarea")!;
+      for (const type of ["keydown", "keypress", "keyup"]) {
+        textarea.dispatchEvent(new KeyboardEvent(type, { key: "Backspace", bubbles: true, cancelable: true, composed: true }));
+      }
+      // Capture at the document runs before the shadow tree, so those are unavoidable.
+      expect(seen.filter((s) => s.startsWith("bubble:"))).toEqual([]);
+      expect(seen.filter((s) => s.startsWith("capture:")).length).toBe(3);
+    } finally {
+      for (const type of ["keydown", "keyup", "keypress"]) {
+        document.removeEventListener(type, capture, true);
+        document.removeEventListener(type, bubble, false);
+      }
+    }
+  });
+
   // jsdom has no scrolling, so record how focus was requested: restoring focus to
   // the editor root without preventScroll jumps Notion back to the top of the page.
   it("restores focus after the composer closes without scrolling the page", async () => {

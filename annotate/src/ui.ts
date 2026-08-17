@@ -570,6 +570,13 @@ export class AnnotatorUI {
       // handler reads them as typing outside any field. Notion answers Backspace
       // by deleting from its own block and taking focus back.
 
+      // Shadow DOM retargets our keystrokes to the host element, so a page-level
+      // handler reads them as typing outside any field. Notion answers Backspace
+      // by deleting from its own block and taking focus back.
+      for (const type of ["keydown", "keyup", "keypress"]) {
+        composer.addEventListener(type, (e) => e.stopPropagation());
+      }
+
       composer.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
           e.stopPropagation();

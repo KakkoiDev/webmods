@@ -2,7 +2,7 @@
 // @name         Webmods Annotate
 // @namespace    http://tampermonkey.net/
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM2MzY2ZjEiLz48dGV4dCB4PSIzMiIgeT0iNDIiIGZvbnQtc2l6ZT0iMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuKcj++4jzwvdGV4dD48L3N2Zz4=
-// @version      2026.08.18.5
+// @version      2026.08.18.6
 // @description  Annotate any web page with Markdown notes - robust anchors, cross-site Tampermonkey storage, notes sidebar, shareable note links, JSON export/import (Alt+Shift+A)
 // @author       KakkoiDev
 // @match        *://*/*
@@ -1457,6 +1457,9 @@ button.wm-corner-sidebar { width: 100%; }
         const save = this.makeButton("Save", "wm-btn wm-primary", () => finish("save"));
         row.appendChild(save);
         composer.appendChild(row);
+        for (const type of ["keydown", "keyup", "keypress"]) {
+          composer.addEventListener(type, (e) => e.stopPropagation());
+        }
         composer.addEventListener("keydown", (e) => {
           if (e.key === "Escape") {
             e.stopPropagation();

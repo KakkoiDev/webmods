@@ -1610,6 +1610,9 @@ button.wm-corner-sidebar { width: 100%; }
         const save = this.makeButton("Save", "wm-btn wm-primary", () => finish("save"));
         row.appendChild(save);
         composer.appendChild(row);
+        for (const type of ["keydown", "keyup", "keypress"]) {
+          composer.addEventListener(type, (e) => e.stopPropagation());
+        }
         composer.addEventListener("keydown", (e) => {
           if (e.key === "Escape") {
             e.stopPropagation();
