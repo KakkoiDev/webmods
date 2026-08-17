@@ -122,6 +122,8 @@ export interface AnnotatorOptions {
     position?: "left" | "right";
     showMarkers?: boolean;
     zIndex?: number;
+    /** Bottom-right widget that appears when the pointer rests in the corner. Default true. */
+    cornerWidget?: boolean;
   };
 
   anchors?: {

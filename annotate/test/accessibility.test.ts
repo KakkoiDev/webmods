@@ -87,6 +87,43 @@ describe("keyboard access", () => {
     expect(after.map((t) => t.tabIndex)).toEqual([-1, 0]);
   });
 
+  it("reveals the corner widget after a dwell in the bottom-right and drives mode plus sidebar", async () => {
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    const corner = () => shadow().querySelector(".wm-corner")!;
+    const open = () => corner().classList.contains("wm-corner-open");
+    // jsdom has no PointerEvent constructor; a MouseEvent carries the same coordinates.
+    const move = (x: number, y: number) =>
+      document.dispatchEvent(new MouseEvent("pointermove", { clientX: x, clientY: y, bubbles: true }));
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    expect(open()).toBe(false);
+    move(vw - 5, vh - 5);
+    expect(open()).toBe(false); // still dwelling
+    await new Promise((r) => setTimeout(r, 300));
+    expect(open()).toBe(true);
+
+    const toggle = corner().querySelector<HTMLElement>("[role=switch]")!;
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    toggle.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(annotator.getMode()).toBe("annotate");
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+
+    corner().querySelector<HTMLElement>(".wm-corner-sidebar")!.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true })
+    );
+    expect(shadow().querySelector(".wm-sidebar")!.classList.contains("wm-open")).toBe(true);
+
+    move(10, 10);
+    await new Promise((r) => setTimeout(r, 450));
+    expect(open()).toBe(false);
+  });
+
+  it("omits the corner widget when it is turned off", () => {
+    annotator = createAnnotator({ storage: createMemoryStorage(), ui: { cornerWidget: false } });
+    expect(shadow().querySelector(".wm-corner")).toBeNull();
+  });
+
   it("shows header actions only on the tabs they belong to", () => {
     annotator = createAnnotator({ storage: createMemoryStorage() });
     annotator.use({

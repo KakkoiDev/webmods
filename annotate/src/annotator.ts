@@ -60,6 +60,7 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
     position: options.ui?.position ?? "right",
     showMarkers: options.ui?.showMarkers !== false,
     zIndex: options.ui?.zIndex ?? 2147483000,
+    cornerWidget: options.ui?.cornerWidget !== false,
   } as const;
 
   let mode: Mode = "explore";
@@ -96,6 +97,8 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
     onReattach: (id) => startReanchor(id),
     onArchive: (id) => void setArchived(id, true).catch((err) => fail(err, "archive")),
     onUnarchive: (id) => void setArchived(id, false).catch((err) => fail(err, "unarchive")),
+    onToggleMode: () => setMode(mode === "annotate" ? "explore" : "annotate"),
+    onToggleSidebar: () => (ui.isSidebarOpen() ? ui.closeSidebar() : ui.openSidebar()),
   });
 
   // -- notes ------------------------------------------------------------

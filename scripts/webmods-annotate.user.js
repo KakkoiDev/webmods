@@ -2,7 +2,7 @@
 // @name         Webmods Annotate
 // @namespace    http://tampermonkey.net/
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM2MzY2ZjEiLz48dGV4dCB4PSIzMiIgeT0iNDIiIGZvbnQtc2l6ZT0iMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuKcj++4jzwvdGV4dD48L3N2Zz4=
-// @version      2026.08.18.2
+// @version      2026.08.18.3
 // @description  Annotate any web page with Markdown notes - robust anchors, cross-site Tampermonkey storage, notes sidebar, shareable note links, JSON export/import (Alt+Shift+A)
 // @author       KakkoiDev
 // @match        *://*/*
@@ -1088,6 +1088,27 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
 .wm-note-archived { opacity: 0.75; cursor: default; }
 .wm-empty { color: #57606a; font-size: 13px; padding: 12px 4px; }
 .wm-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.wm-corner {
+  position: fixed; pointer-events: auto; display: none;
+  width: 196px; padding: 8px 10px; gap: 8px;
+  background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(31,35,40,0.16);
+}
+.wm-corner.wm-corner-open { display: grid; }
+.wm-corner-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.wm-corner-label { font-size: 12.5px; }
+button.wm-switch {
+  width: 34px; height: 19px; flex: none; cursor: pointer; position: relative;
+  border: 0; border-radius: 999px; background: #d0d7de; padding: 0;
+}
+button.wm-switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+  border-radius: 50%; background: #fff; transition: left 120ms;
+}
+button.wm-switch[aria-checked="true"] { background: #6366f1; }
+button.wm-switch[aria-checked="true"]::after { left: 17px; }
+button.wm-switch:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+button.wm-corner-sidebar { width: 100%; }
 .wm-mode-pill {
   position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
   pointer-events: none; background: #1f2328; color: #fff; font-size: 12px; font-weight: 600;
@@ -1095,6 +1116,9 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
 }
 `;
   var MODE_TEXT_DEFAULT = "Annotate mode \u2014 click a block to add a note (Esc to exit)";
+  var CORNER_SIZE = 22;
+  var CORNER_DWELL_MS = 250;
+  var CORNER_HIDE_MS = 400;
   var MAX_RANGE_RECTS = 50;
   var AnnotatorUI = class {
     constructor(doc, options, noteCallbacks) {
@@ -1113,6 +1137,9 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
       this.tabCleanup = null;
       this.notes = [];
       this.archived = [];
+      this.cornerEl = null;
+      this.cornerSwitch = null;
+      this.cornerTimer = null;
       this.repositionScheduled = false;
       this.listeners = [];
       this.noteCallbacks = noteCallbacks;
@@ -1152,6 +1179,7 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
       this.sidebarBody.className = "wm-sidebar-body";
       this.sidebar.appendChild(this.sidebarBody);
       this.layer.appendChild(this.sidebar);
+      if (options.cornerWidget) this.buildCornerWidget();
       doc.documentElement.appendChild(this.host);
       const reposition = () => this.scheduleReposition();
       doc.addEventListener("scroll", reposition, { capture: true, passive: true });
@@ -1161,6 +1189,90 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
         win.addEventListener("resize", reposition, { passive: true });
         this.listeners.push(() => win.removeEventListener("resize", reposition));
       }
+    }
+    buildCornerWidget() {
+      const corner = this.doc.createElement("div");
+      corner.className = "wm-corner";
+      corner.setAttribute("role", "group");
+      corner.setAttribute("aria-label", "Annotate controls");
+      const row = this.doc.createElement("div");
+      row.className = "wm-corner-row";
+      const label = this.doc.createElement("span");
+      label.className = "wm-corner-label";
+      label.id = "wm-corner-mode-label";
+      label.textContent = "Edit mode";
+      const toggle = this.doc.createElement("button");
+      toggle.type = "button";
+      toggle.className = "wm-switch";
+      toggle.setAttribute("role", "switch");
+      toggle.setAttribute("aria-checked", "false");
+      toggle.setAttribute("aria-labelledby", label.id);
+      toggle.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.noteCallbacks.onToggleMode();
+      });
+      row.append(label, toggle);
+      const sidebarBtn = this.makeButton(
+        "Notes sidebar",
+        "wm-btn wm-primary wm-corner-sidebar",
+        () => this.noteCallbacks.onToggleSidebar()
+      );
+      corner.append(row, sidebarBtn);
+      this.layer.appendChild(corner);
+      this.cornerEl = corner;
+      this.cornerSwitch = toggle;
+      this.positionCorner();
+      const onMove = (e) => this.trackCorner(e.clientX, e.clientY);
+      this.doc.addEventListener("pointermove", onMove, { capture: true, passive: true });
+      this.listeners.push(() => {
+        this.doc.removeEventListener("pointermove", onMove, { capture: true });
+        if (this.cornerTimer) clearTimeout(this.cornerTimer);
+      });
+    }
+    /** Bottom-right, clear of the sidebar when that is open on the same side. */
+    positionCorner() {
+      if (!this.cornerEl) return;
+      const clearSidebar = this.options.position === "right" && this.isSidebarOpen();
+      this.cornerEl.style.right = clearSidebar ? "352px" : "12px";
+      this.cornerEl.style.bottom = "12px";
+    }
+    trackCorner(x, y) {
+      const corner = this.cornerEl;
+      if (!corner) return;
+      const win = this.doc.defaultView;
+      const vw = win?.innerWidth ?? 1200;
+      const vh = win?.innerHeight ?? 800;
+      const inHotspot = x >= vw - CORNER_SIZE && y >= vh - CORNER_SIZE;
+      const open = corner.classList.contains("wm-corner-open");
+      const rect = corner.getBoundingClientRect();
+      const onPanel = open && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+      if (inHotspot || onPanel) {
+        if (this.cornerTimer && open) {
+          clearTimeout(this.cornerTimer);
+          this.cornerTimer = null;
+        }
+        if (open || this.cornerTimer) return;
+        this.cornerTimer = setTimeout(() => {
+          this.cornerTimer = null;
+          if (this.doc.fullscreenElement) return;
+          this.positionCorner();
+          corner.classList.add("wm-corner-open");
+        }, CORNER_DWELL_MS);
+        return;
+      }
+      if (!open) {
+        if (this.cornerTimer) {
+          clearTimeout(this.cornerTimer);
+          this.cornerTimer = null;
+        }
+        return;
+      }
+      if (this.cornerTimer) return;
+      this.cornerTimer = setTimeout(() => {
+        this.cornerTimer = null;
+        corner.classList.remove("wm-corner-open");
+      }, CORNER_HIDE_MS);
     }
     destroy() {
       for (const off of this.listeners) off();
@@ -1179,6 +1291,7 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
       this.hoverBox.style.display = "block";
     }
     setModeIndicator(on, text) {
+      if (text === void 0) this.cornerSwitch?.setAttribute("aria-checked", String(on));
       this.modePill.textContent = text ?? MODE_TEXT_DEFAULT;
       this.modePill.style.display = on ? "block" : "none";
       this.announce(on ? text ?? "Annotation mode on" : "Annotation mode off");
@@ -1379,11 +1492,13 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
     }
     openSidebar() {
       this.sidebar.classList.add("wm-open");
+      this.positionCorner();
       this.renderTabs();
       this.activateTab(this.activeTab);
     }
     closeSidebar() {
       this.sidebar.classList.remove("wm-open");
+      this.positionCorner();
     }
     /** Open the sidebar on the Notes tab with one note's card scrolled into view and emphasized. */
     focusNote(id) {
@@ -1620,7 +1735,8 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
       sidebar: options.ui?.sidebar !== false,
       position: options.ui?.position ?? "right",
       showMarkers: options.ui?.showMarkers !== false,
-      zIndex: options.ui?.zIndex ?? 2147483e3
+      zIndex: options.ui?.zIndex ?? 2147483e3,
+      cornerWidget: options.ui?.cornerWidget !== false
     };
     let mode = "explore";
     let page = resolvePageIdentity(win.location, doc);
@@ -1649,7 +1765,9 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
       onCopyLink: (id) => void copyNoteLink(id),
       onReattach: (id) => startReanchor(id),
       onArchive: (id) => void setArchived(id, true).catch((err) => fail(err, "archive")),
-      onUnarchive: (id) => void setArchived(id, false).catch((err) => fail(err, "unarchive"))
+      onUnarchive: (id) => void setArchived(id, false).catch((err) => fail(err, "unarchive")),
+      onToggleMode: () => setMode(mode === "annotate" ? "explore" : "annotate"),
+      onToggleSidebar: () => ui.isSidebarOpen() ? ui.closeSidebar() : ui.openSidebar()
     });
     async function refresh() {
       try {

@@ -113,6 +113,27 @@ button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
 .wm-note-archived { opacity: 0.75; cursor: default; }
 .wm-empty { color: #57606a; font-size: 13px; padding: 12px 4px; }
 .wm-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.wm-corner {
+  position: fixed; pointer-events: auto; display: none;
+  width: 196px; padding: 8px 10px; gap: 8px;
+  background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(31,35,40,0.16);
+}
+.wm-corner.wm-corner-open { display: grid; }
+.wm-corner-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.wm-corner-label { font-size: 12.5px; }
+button.wm-switch {
+  width: 34px; height: 19px; flex: none; cursor: pointer; position: relative;
+  border: 0; border-radius: 999px; background: #d0d7de; padding: 0;
+}
+button.wm-switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+  border-radius: 50%; background: #fff; transition: left 120ms;
+}
+button.wm-switch[aria-checked="true"] { background: #6366f1; }
+button.wm-switch[aria-checked="true"]::after { left: 17px; }
+button.wm-switch:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+button.wm-corner-sidebar { width: 100%; }
 .wm-mode-pill {
   position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
   pointer-events: none; background: #1f2328; color: #fff; font-size: 12px; font-weight: 600;
@@ -129,6 +150,8 @@ export interface UIOptions {
   position: "left" | "right";
   zIndex: number;
   showMarkers: boolean;
+  /** Hover-activated bottom-right widget with the mode switch. */
+  cornerWidget: boolean;
 }
 
 interface NoteCallbacks {
@@ -139,9 +162,15 @@ interface NoteCallbacks {
   onReattach(id: string): void;
   onArchive(id: string): void;
   onUnarchive(id: string): void;
+  onToggleMode(): void;
+  onToggleSidebar(): void;
 }
 
 const MODE_TEXT_DEFAULT = "Annotate mode — click a block to add a note (Esc to exit)";
+/** Corner hover zone, and how long the pointer must dwell there before the widget shows. */
+const CORNER_SIZE = 22;
+const CORNER_DWELL_MS = 250;
+const CORNER_HIDE_MS = 400;
 /** Very long selections wrap into many line boxes; cap what we paint. */
 const MAX_RANGE_RECTS = 50;
 
@@ -169,6 +198,9 @@ export class AnnotatorUI {
   private notes: ResolvedNote[] = [];
   private archived: Annotation[] = [];
   private noteCallbacks: NoteCallbacks;
+  private cornerEl: HTMLElement | null = null;
+  private cornerSwitch: HTMLElement | null = null;
+  private cornerTimer: ReturnType<typeof setTimeout> | null = null;
   private repositionScheduled = false;
   private listeners: Array<() => void> = [];
 
@@ -218,6 +250,8 @@ export class AnnotatorUI {
     this.sidebar.appendChild(this.sidebarBody);
     this.layer.appendChild(this.sidebar);
 
+    if (options.cornerWidget) this.buildCornerWidget();
+
     doc.documentElement.appendChild(this.host);
 
     const reposition = () => this.scheduleReposition();
@@ -228,6 +262,98 @@ export class AnnotatorUI {
       win.addEventListener("resize", reposition, { passive: true });
       this.listeners.push(() => win.removeEventListener("resize", reposition));
     }
+  }
+
+  private buildCornerWidget(): void {
+    const corner = this.doc.createElement("div");
+    corner.className = "wm-corner";
+    corner.setAttribute("role", "group");
+    corner.setAttribute("aria-label", "Annotate controls");
+
+    const row = this.doc.createElement("div");
+    row.className = "wm-corner-row";
+    const label = this.doc.createElement("span");
+    label.className = "wm-corner-label";
+    label.id = "wm-corner-mode-label";
+    label.textContent = "Edit mode";
+    const toggle = this.doc.createElement("button");
+    toggle.type = "button";
+    toggle.className = "wm-switch";
+    toggle.setAttribute("role", "switch");
+    toggle.setAttribute("aria-checked", "false");
+    toggle.setAttribute("aria-labelledby", label.id);
+    toggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.noteCallbacks.onToggleMode();
+    });
+    row.append(label, toggle);
+
+    const sidebarBtn = this.makeButton("Notes sidebar", "wm-btn wm-primary wm-corner-sidebar", () =>
+      this.noteCallbacks.onToggleSidebar()
+    );
+
+    corner.append(row, sidebarBtn);
+    this.layer.appendChild(corner);
+    this.cornerEl = corner;
+    this.cornerSwitch = toggle;
+    this.positionCorner();
+
+    const onMove = (e: PointerEvent) => this.trackCorner(e.clientX, e.clientY);
+    this.doc.addEventListener("pointermove", onMove, { capture: true, passive: true });
+    this.listeners.push(() => {
+      this.doc.removeEventListener("pointermove", onMove, { capture: true } as EventListenerOptions);
+      if (this.cornerTimer) clearTimeout(this.cornerTimer);
+    });
+  }
+
+  /** Bottom-right, clear of the sidebar when that is open on the same side. */
+  private positionCorner(): void {
+    if (!this.cornerEl) return;
+    const clearSidebar = this.options.position === "right" && this.isSidebarOpen();
+    this.cornerEl.style.right = clearSidebar ? "352px" : "12px";
+    this.cornerEl.style.bottom = "12px";
+  }
+
+  private trackCorner(x: number, y: number): void {
+    const corner = this.cornerEl;
+    if (!corner) return;
+    const win = this.doc.defaultView;
+    const vw = win?.innerWidth ?? 1200;
+    const vh = win?.innerHeight ?? 800;
+    const inHotspot = x >= vw - CORNER_SIZE && y >= vh - CORNER_SIZE;
+    const open = corner.classList.contains("wm-corner-open");
+    const rect = corner.getBoundingClientRect();
+    const onPanel = open && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+
+    if (inHotspot || onPanel) {
+      if (this.cornerTimer && open) {
+        clearTimeout(this.cornerTimer);
+        this.cornerTimer = null;
+      }
+      if (open || this.cornerTimer) return;
+      this.cornerTimer = setTimeout(() => {
+        this.cornerTimer = null;
+        // A fullscreen element owns the whole viewport; do not float over it.
+        if (this.doc.fullscreenElement) return;
+        this.positionCorner();
+        corner.classList.add("wm-corner-open");
+      }, CORNER_DWELL_MS);
+      return;
+    }
+
+    if (!open) {
+      if (this.cornerTimer) {
+        clearTimeout(this.cornerTimer);
+        this.cornerTimer = null;
+      }
+      return;
+    }
+    if (this.cornerTimer) return;
+    this.cornerTimer = setTimeout(() => {
+      this.cornerTimer = null;
+      corner.classList.remove("wm-corner-open");
+    }, CORNER_HIDE_MS);
   }
 
   destroy(): void {
@@ -250,6 +376,9 @@ export class AnnotatorUI {
   }
 
   setModeIndicator(on: boolean, text?: string): void {
+    // A re-anchor session passes its own text; it is not annotate mode, so the
+    // switch keeps showing the mode the user actually set.
+    if (text === undefined) this.cornerSwitch?.setAttribute("aria-checked", String(on));
     this.modePill.textContent = text ?? MODE_TEXT_DEFAULT;
     this.modePill.style.display = on ? "block" : "none";
     this.announce(on ? text ?? "Annotation mode on" : "Annotation mode off");
@@ -485,12 +614,14 @@ export class AnnotatorUI {
 
   openSidebar(): void {
     this.sidebar.classList.add("wm-open");
+    this.positionCorner();
     this.renderTabs();
     this.activateTab(this.activeTab);
   }
 
   closeSidebar(): void {
     this.sidebar.classList.remove("wm-open");
+    this.positionCorner();
   }
 
   /** Open the sidebar on the Notes tab with one note's card scrolled into view and emphasized. */
