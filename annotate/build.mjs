@@ -50,7 +50,21 @@ const result = await build({
 });
 
 const today = new Date();
-const version = `${today.getFullYear()}.${String(today.getMonth() + 1).padStart(2, "0")}.${String(today.getDate()).padStart(2, "0")}`;
+const day = `${today.getFullYear()}.${String(today.getMonth() + 1).padStart(2, "0")}.${String(today.getDate()).padStart(2, "0")}`;
+
+// Keep the version already on disk when it is same-day: the pre-commit bumper
+// counts up from it (2026.08.17 -> .1 -> .2), and resetting to the bare day here
+// would hand two different builds the same version, so update checks stall.
+function currentVersion() {
+  try {
+    const existing = readFileSync(join(root, "dist/annotate.user.js"), "utf8").match(/^\s*\/\/\s*@version\s+(\S+)/m);
+    return existing?.[1];
+  } catch {
+    return undefined;
+  }
+}
+const previous = currentVersion();
+const version = previous && (previous === day || previous.startsWith(`${day}.`)) ? previous : day;
 
 // Inline data: URI icon (pencil on indigo) — the script targets every site, so
 // there is no single target-site favicon; data: always renders in the dashboard.
