@@ -1,6 +1,6 @@
 import { createAnchor, resolveAnchor } from "./anchors";
 import { createRangeAnchor } from "./ranges";
-import { buildExcludeFn, createDefaultBlockResolver, isAnnotatorUI } from "./blocks";
+import { buildExcludeFn, createDefaultBlockResolver, inDocumentEditor, isAnnotatorUI } from "./blocks";
 import { createCommandRegistry } from "./commands";
 import { copyText } from "./dom-utils";
 import { Emitter, generateId } from "./events";
@@ -383,11 +383,15 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
       }
     }
 
-    // Typing in a field should never trigger a global shortcut.
+    // Typing in a field should never trigger a global shortcut. A page-wide editor
+    // (Notion, Google Docs) is not a field: it holds the caret all the time, and
+    // suppressing there would leave no way to enter annotate mode.
     const target = e.target as Element | null;
     const typing =
       !!target &&
-      (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || (target as HTMLElement).isContentEditable);
+      (target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        ((target as HTMLElement).isContentEditable && !inDocumentEditor(target)));
     if (typing) return;
 
     const toggleShortcut = options.shortcuts?.toggle === undefined ? DEFAULT_SHORTCUT : options.shortcuts.toggle;

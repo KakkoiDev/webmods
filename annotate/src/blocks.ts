@@ -57,11 +57,39 @@ function ownTextLength(el: Element): number {
   return (el.textContent || "").trim().length;
 }
 
+const EDITABLE_SELECTOR = '[contenteditable=""],[contenteditable="true"]';
+
+/** Text length above which an editable root holds a document rather than a form value. */
+const DOCUMENT_EDITOR_MIN_TEXT = 400;
+
+function outermostEditableRoot(el: Element): Element | null {
+  let root: Element | null = null;
+  let current: Element | null = el.closest(EDITABLE_SELECTOR);
+  while (current) {
+    root = current;
+    current = current.parentElement?.closest(EDITABLE_SELECTOR) ?? null;
+  }
+  return root;
+}
+
+/**
+ * Notion, Google Docs and CMS editors wrap the whole page body in one
+ * contenteditable. Those blocks are content, not a control the user is filling in.
+ */
+export function inDocumentEditor(el: Element): boolean {
+  const root = outermostEditableRoot(el);
+  return !!root && (root.textContent || "").trim().length >= DOCUMENT_EDITOR_MIN_TEXT;
+}
+
 function isInteractive(el: Element): boolean {
   if (CONTROL_TAGS.has(el.tagName)) return true;
-  if (el instanceof HTMLElement && (el.isContentEditable || el.draggable)) return true;
+  if (el instanceof HTMLElement && el.draggable) return true;
+  const editableDocument = inDocumentEditor(el);
+  if (el instanceof HTMLElement && el.isContentEditable && !editableDocument) return true;
   const role = el.getAttribute("role");
-  if (role && ["button", "textbox", "slider", "checkbox", "switch", "combobox", "menuitem"].includes(role)) return true;
+  if (role && ["button", "textbox", "slider", "checkbox", "switch", "combobox", "menuitem"].includes(role)) {
+    return !(editableDocument && role === "textbox");
+  }
   return false;
 }
 
@@ -105,6 +133,23 @@ export function scoreBlock(el: Element): number {
   return score;
 }
 
+/**
+ * Editors nest several anonymous divs that all carry the same text. Annotate the
+ * outermost of them so the highlight covers the block, not one inner text line.
+ */
+function liftThroughWrappers(el: Element, exclude: (el: Element) => boolean): Element {
+  let best = el;
+  const text = (el.textContent || "").trim();
+  while (!SEMANTIC_TAGS.has(best.tagName)) {
+    const parent = best.parentElement;
+    if (!parent || SKIP_CONTAINERS.has(parent.tagName) || SEMANTIC_TAGS.has(parent.tagName)) break;
+    if ((parent.textContent || "").trim() !== text) break;
+    if (exclude(parent) || !isVisible(parent) || isAnnotatorUI(parent)) break;
+    best = parent;
+  }
+  return best;
+}
+
 export function createDefaultBlockResolver(): BlockResolver {
   return (target, { exclude }) => {
     let el: Element | null = target;
@@ -127,6 +172,6 @@ export function createDefaultBlockResolver(): BlockResolver {
     }
 
     if (!best || bestScore < 10) return null;
-    return best;
+    return liftThroughWrappers(best, exclude);
   };
 }

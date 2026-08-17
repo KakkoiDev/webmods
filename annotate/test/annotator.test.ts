@@ -157,3 +157,45 @@ describe("createAnnotator", () => {
     annotator = null;
   });
 });
+
+describe("shortcuts inside editors", () => {
+  // jsdom leaves isContentEditable undefined; the browser derives it from the
+  // nearest editable ancestor.
+  function fakeContentEditable(): void {
+    Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return !!this.closest('[contenteditable=""],[contenteditable="true"]');
+      },
+    });
+  }
+
+  afterEach(() => {
+    delete (HTMLElement.prototype as Partial<HTMLElement>).isContentEditable;
+  });
+
+  function pressToggle(target: Element): void {
+    target.dispatchEvent(new KeyboardEvent("keydown", { key: "A", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+  }
+
+  it("toggles annotate mode from inside a page-wide editor", () => {
+    document.body.innerHTML = `
+      <div contenteditable="true">
+        <div id="block">Add the Order and OrderLine models with their migration.</div>
+        <div>${"Body text that makes this editable root document-sized. ".repeat(12)}</div>
+      </div>
+    `;
+    fakeContentEditable();
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    pressToggle(document.getElementById("block")!);
+    expect(annotator.getMode()).toBe("annotate");
+  });
+
+  it("stays out of the way while typing in an editable field", () => {
+    document.body.innerHTML = `<div id="composer" contenteditable="true">Reply to this thread</div>`;
+    fakeContentEditable();
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    pressToggle(document.getElementById("composer")!);
+    expect(annotator.getMode()).toBe("explore");
+  });
+});

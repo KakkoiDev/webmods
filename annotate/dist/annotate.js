@@ -19,7 +19,7 @@ var WebmodsAnnotate = (() => {
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // annotate/src/index.ts
+  // src/index.ts
   var index_exports = {};
   __export(index_exports, {
     DocumentStorage: () => DocumentStorage,
@@ -78,7 +78,7 @@ var WebmodsAnnotate = (() => {
     validateExportDocument: () => validateExportDocument
   });
 
-  // annotate/src/blocks.ts
+  // src/blocks.ts
   var SEMANTIC_TAGS = /* @__PURE__ */ new Set([
     "ARTICLE",
     "SECTION",
@@ -127,11 +127,30 @@ var WebmodsAnnotate = (() => {
   function ownTextLength(el) {
     return (el.textContent || "").trim().length;
   }
+  var EDITABLE_SELECTOR = '[contenteditable=""],[contenteditable="true"]';
+  var DOCUMENT_EDITOR_MIN_TEXT = 400;
+  function outermostEditableRoot(el) {
+    let root = null;
+    let current = el.closest(EDITABLE_SELECTOR);
+    while (current) {
+      root = current;
+      current = current.parentElement?.closest(EDITABLE_SELECTOR) ?? null;
+    }
+    return root;
+  }
+  function inDocumentEditor(el) {
+    const root = outermostEditableRoot(el);
+    return !!root && (root.textContent || "").trim().length >= DOCUMENT_EDITOR_MIN_TEXT;
+  }
   function isInteractive(el) {
     if (CONTROL_TAGS.has(el.tagName)) return true;
-    if (el instanceof HTMLElement && (el.isContentEditable || el.draggable)) return true;
+    if (el instanceof HTMLElement && el.draggable) return true;
+    const editableDocument = inDocumentEditor(el);
+    if (el instanceof HTMLElement && el.isContentEditable && !editableDocument) return true;
     const role = el.getAttribute("role");
-    if (role && ["button", "textbox", "slider", "checkbox", "switch", "combobox", "menuitem"].includes(role)) return true;
+    if (role && ["button", "textbox", "slider", "checkbox", "switch", "combobox", "menuitem"].includes(role)) {
+      return !(editableDocument && role === "textbox");
+    }
     return false;
   }
   function isNavOrOverlay(el) {
@@ -164,6 +183,18 @@ var WebmodsAnnotate = (() => {
     if (tag === "P" || tag === "LI" || /^H[1-6]$/.test(tag) || tag === "BLOCKQUOTE" || tag === "PRE") score += 10;
     return score;
   }
+  function liftThroughWrappers(el, exclude) {
+    let best = el;
+    const text = (el.textContent || "").trim();
+    while (!SEMANTIC_TAGS.has(best.tagName)) {
+      const parent = best.parentElement;
+      if (!parent || SKIP_CONTAINERS.has(parent.tagName) || SEMANTIC_TAGS.has(parent.tagName)) break;
+      if ((parent.textContent || "").trim() !== text) break;
+      if (exclude(parent) || !isVisible(parent) || isAnnotatorUI(parent)) break;
+      best = parent;
+    }
+    return best;
+  }
   function createDefaultBlockResolver() {
     return (target, { exclude }) => {
       let el = target;
@@ -183,11 +214,11 @@ var WebmodsAnnotate = (() => {
         depth++;
       }
       if (!best || bestScore < 10) return null;
-      return best;
+      return liftThroughWrappers(best, exclude);
     };
   }
 
-  // annotate/src/text-utils.ts
+  // src/text-utils.ts
   function normalizeText(text) {
     return text.replace(/\s+/g, " ").trim();
   }
@@ -211,7 +242,7 @@ var WebmodsAnnotate = (() => {
     return 2 * matches / (a.length + b.length - 2);
   }
 
-  // annotate/src/ranges.ts
+  // src/ranges.ts
   var QUOTE_MAX = 300;
   var CONTEXT_CHARS = 32;
   function blockTextWithMap(block) {
@@ -387,7 +418,7 @@ var WebmodsAnnotate = (() => {
     return buildRange(map, bestAt, Math.min(map.text.length, bestAt + len));
   }
 
-  // annotate/src/anchors.ts
+  // src/anchors.ts
   var QUOTE_MAX2 = 300;
   var CONTEXT_MAX = 60;
   var STABLE_ATTRS = ["id", "data-testid", "data-qa", "data-test", "name", "aria-label", "role", "href", "title"];
@@ -603,7 +634,7 @@ var WebmodsAnnotate = (() => {
     return { status: "detached", reason: "no candidate matched with sufficient confidence" };
   }
 
-  // annotate/src/commands.ts
+  // src/commands.ts
   function createCommandRegistry() {
     const commands = /* @__PURE__ */ new Map();
     return {
@@ -623,7 +654,7 @@ var WebmodsAnnotate = (() => {
     };
   }
 
-  // annotate/src/dom-utils.ts
+  // src/dom-utils.ts
   function download(filename, text, type) {
     const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
@@ -642,7 +673,7 @@ var WebmodsAnnotate = (() => {
     await navigator.clipboard.writeText(text);
   }
 
-  // annotate/src/events.ts
+  // src/events.ts
   var Emitter = class {
     constructor() {
       this.handlers = /* @__PURE__ */ new Map();
@@ -684,12 +715,12 @@ var WebmodsAnnotate = (() => {
     return `${time}${rand}`;
   }
 
-  // annotate/src/types.ts
+  // src/types.ts
   var SCHEMA_VERSION = 1;
   var NOTE_FRAGMENT_PARAM = "wm-note";
   var INLINE_FRAGMENT_PARAM = "wm";
 
-  // annotate/src/page-identity.ts
+  // src/page-identity.ts
   var DEFAULT_TRACKING_PARAMS = [
     "utm_source",
     "utm_medium",
@@ -758,7 +789,7 @@ var WebmodsAnnotate = (() => {
     };
   }
 
-  // annotate/src/storage.ts
+  // src/storage.ts
   function emptyDB() {
     return { schemaVersion: SCHEMA_VERSION, pages: {} };
   }
@@ -985,7 +1016,7 @@ var WebmodsAnnotate = (() => {
     };
   }
 
-  // annotate/src/markdown.ts
+  // src/markdown.ts
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
@@ -1083,7 +1114,7 @@ var WebmodsAnnotate = (() => {
     return html.join("\n");
   }
 
-  // annotate/src/ui.ts
+  // src/ui.ts
   var CSS2 = `
 :host { all: initial; }
 * { box-sizing: border-box; }
@@ -1649,7 +1680,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     }
   };
 
-  // annotate/src/annotator.ts
+  // src/annotator.ts
   var DEFAULT_SHORTCUT = "alt+shift+a";
   var DEFAULT_SIDEBAR_SHORTCUT = "alt+shift+s";
   function matchesShortcut(e, shortcut) {
@@ -1948,7 +1979,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
         }
       }
       const target = e.target;
-      const typing = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      const typing = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable && !inDocumentEditor(target));
       if (typing) return;
       const toggleShortcut = options.shortcuts?.toggle === void 0 ? DEFAULT_SHORTCUT : options.shortcuts.toggle;
       if (toggleShortcut && matchesShortcut(e, toggleShortcut)) {
@@ -2077,7 +2108,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     return api;
   }
 
-  // annotate/src/plugins/portable-data.ts
+  // src/plugins/portable-data.ts
   var INLINE_MAX_BYTES = 4096;
   function validateAnnotation(value) {
     if (!value || typeof value !== "object") return false;
@@ -2255,7 +2286,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     return plugin;
   }
 
-  // annotate/src/plugins/global-browser.ts
+  // src/plugins/global-browser.ts
   var MAX_RESULTS = 5e3;
   function hostOf(url) {
     try {
@@ -2539,7 +2570,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     return plugin;
   }
 
-  // annotate/src/plugins/chat.ts
+  // src/plugins/chat.ts
   var MAX_PAGE_CHARS = 12e3;
   var MAX_TARGET_CHARS = 4e3;
   var MAX_SURROUNDING_CHARS = 1e3;
@@ -2857,7 +2888,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     return plugin;
   }
 
-  // annotate/src/providers/context-prompt.ts
+  // src/providers/context-prompt.ts
   var SYSTEM_PREAMBLE = "You are helping a user understand and annotate a web page. Answer from the page context below when it is relevant, and say so plainly when it is not. Be concise: lead with the answer, then supporting detail.";
   function buildSystemPrompt(context, preamble = SYSTEM_PREAMBLE) {
     const parts = [preamble, "", "# Page", `Title: ${context.page.title ?? "(untitled)"}`, `URL: ${context.page.normalizedUrl}`];
@@ -2885,7 +2916,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     return parts.join("\n");
   }
 
-  // annotate/src/providers/sse.ts
+  // src/providers/sse.ts
   async function* parseSSE(body) {
     const reader = body.getReader();
     const decoder = new TextDecoder();
@@ -2928,7 +2959,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     return `${label} ${response.status}${detail ? `: ${String(detail).slice(0, 400)}` : ""}`;
   }
 
-  // annotate/src/providers/claude.ts
+  // src/providers/claude.ts
   var DEFAULT_MODEL = "claude-opus-5";
   var DEFAULT_MAX_TOKENS = 8192;
   var DEFAULT_EFFORT = "medium";
@@ -2985,7 +3016,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     };
   }
 
-  // annotate/src/providers/openai.ts
+  // src/providers/openai.ts
   var DEFAULT_MODEL2 = "gpt-5";
   var DEFAULT_BASE_URL = "https://api.openai.com/v1";
   var DEFAULT_MAX_TOKENS2 = 4096;
@@ -3036,7 +3067,7 @@ button.wm-btn.wm-danger { color: #d1242f; }
     };
   }
 
-  // annotate/src/plugins/excalidraw.ts
+  // src/plugins/excalidraw.ts
   function isExcalidrawAttachment(att) {
     return att.type === "excalidraw";
   }
