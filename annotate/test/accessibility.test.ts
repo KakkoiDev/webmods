@@ -103,6 +103,7 @@ describe("keyboard access", () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(open()).toBe(true);
 
+    expect(corner().querySelector(".wm-corner-label")!.textContent).toBe("Annotate mode");
     const toggle = corner().querySelector<HTMLElement>("[role=switch]")!;
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     toggle.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -147,6 +148,7 @@ describe("keyboard access", () => {
     annotator = createAnnotator({ storage: createMemoryStorage() });
     annotator.openSidebar();
     const headerSwitch = () => shadow().querySelector<HTMLElement>(".wm-header-switch [role=switch]")!;
+    expect(shadow().querySelector(".wm-header-switch")!.textContent).toBe("Annotate");
     expect(headerSwitch().getAttribute("aria-checked")).toBe("false");
 
     headerSwitch().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));

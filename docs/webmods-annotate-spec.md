@@ -1004,7 +1004,7 @@ Archiving keeps a note but takes it out of the way.
 A small panel in the bottom-right corner, revealed by the pointer resting in a
 22x22 hotspot for 250ms and hidden 400ms after it leaves.
 
-- an `Edit mode` switch mirroring the annotate mode shortcut both ways;
+- an `Annotate mode` switch mirroring the annotate mode shortcut both ways;
 - a button that toggles the notes sidebar;
 - lives in the annotator's own shadow layer, so it is never annotatable;
 - hides while a fullscreen element is present, and shifts clear of an open

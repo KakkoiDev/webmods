@@ -1,6 +1,6 @@
 /* @webmods/annotate v0.1.0 | MIT | https://github.com/KakkoiDev/webmods */
 
-// src/blocks.ts
+// annotate/src/blocks.ts
 var SEMANTIC_TAGS = /* @__PURE__ */ new Set([
   "ARTICLE",
   "SECTION",
@@ -140,7 +140,7 @@ function createDefaultBlockResolver() {
   };
 }
 
-// src/text-utils.ts
+// annotate/src/text-utils.ts
 function normalizeText(text) {
   return text.replace(/\s+/g, " ").trim();
 }
@@ -164,7 +164,7 @@ function textSimilarity(a, b) {
   return 2 * matches / (a.length + b.length - 2);
 }
 
-// src/ranges.ts
+// annotate/src/ranges.ts
 var QUOTE_MAX = 300;
 var CONTEXT_CHARS = 32;
 function blockTextWithMap(block) {
@@ -340,7 +340,7 @@ function resolveRangeInBlock(block, anchor) {
   return buildRange(map, bestAt, Math.min(map.text.length, bestAt + len));
 }
 
-// src/anchors.ts
+// annotate/src/anchors.ts
 var QUOTE_MAX2 = 300;
 var CONTEXT_MAX = 60;
 var STABLE_ATTRS = ["id", "data-testid", "data-qa", "data-test", "name", "aria-label", "role", "href", "title"];
@@ -556,7 +556,7 @@ function resolveAnchor(anchor, doc) {
   return { status: "detached", reason: "no candidate matched with sufficient confidence" };
 }
 
-// src/archive.ts
+// annotate/src/archive.ts
 var ARCHIVED_KEY = "archived";
 function isArchived(annotation) {
   return typeof annotation.metadata?.[ARCHIVED_KEY] === "number";
@@ -566,7 +566,7 @@ function archivedAt(annotation) {
   return typeof value === "number" ? value : null;
 }
 
-// src/commands.ts
+// annotate/src/commands.ts
 function createCommandRegistry() {
   const commands = /* @__PURE__ */ new Map();
   return {
@@ -586,7 +586,7 @@ function createCommandRegistry() {
   };
 }
 
-// src/dom-utils.ts
+// annotate/src/dom-utils.ts
 function download(filename, text, type) {
   const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
@@ -605,7 +605,7 @@ async function copyText(text) {
   await navigator.clipboard.writeText(text);
 }
 
-// src/events.ts
+// annotate/src/events.ts
 var Emitter = class {
   constructor() {
     this.handlers = /* @__PURE__ */ new Map();
@@ -647,12 +647,12 @@ function generateId() {
   return `${time}${rand}`;
 }
 
-// src/types.ts
+// annotate/src/types.ts
 var SCHEMA_VERSION = 1;
 var NOTE_FRAGMENT_PARAM = "wm-note";
 var INLINE_FRAGMENT_PARAM = "wm";
 
-// src/page-identity.ts
+// annotate/src/page-identity.ts
 var DEFAULT_TRACKING_PARAMS = [
   "utm_source",
   "utm_medium",
@@ -721,7 +721,7 @@ function createDefaultPageIdentityResolver(extraStripParams = []) {
   };
 }
 
-// src/storage.ts
+// annotate/src/storage.ts
 function emptyDB() {
   return { schemaVersion: SCHEMA_VERSION, pages: {} };
 }
@@ -948,7 +948,7 @@ function createIndexedDBStorage(name = IDB_NAME) {
   };
 }
 
-// src/markdown.ts
+// annotate/src/markdown.ts
 function escapeHtml(text) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -1046,7 +1046,7 @@ function renderMarkdown(source) {
   return html.join("\n");
 }
 
-// src/ui.ts
+// annotate/src/ui.ts
 var CSS2 = `
 :host { all: initial; }
 * { box-sizing: border-box; }
@@ -1300,7 +1300,7 @@ var AnnotatorUI = class {
     const label = this.doc.createElement("span");
     label.className = "wm-corner-label";
     label.id = "wm-corner-mode-label";
-    label.textContent = "Edit mode";
+    label.textContent = "Annotate mode";
     const toggle = this.makeModeSwitch();
     toggle.setAttribute("aria-labelledby", label.id);
     row.append(label, toggle);
@@ -1650,9 +1650,9 @@ var AnnotatorUI = class {
     const modeGroup = this.doc.createElement("span");
     modeGroup.className = "wm-header-switch";
     const modeLabel = this.doc.createElement("span");
-    modeLabel.textContent = "Edit";
+    modeLabel.textContent = "Annotate";
     const modeSwitch = this.makeModeSwitch();
-    modeSwitch.setAttribute("aria-label", "Edit mode");
+    modeSwitch.setAttribute("aria-label", "Annotate mode");
     modeSwitch.title = "Annotate mode (Alt+Shift+A)";
     modeGroup.append(modeLabel, modeSwitch);
     this.tabBar.appendChild(modeGroup);
@@ -1873,7 +1873,7 @@ var AnnotatorUI = class {
   }
 };
 
-// src/annotator.ts
+// annotate/src/annotator.ts
 var DEFAULT_SHORTCUT = "alt+shift+a";
 var DEFAULT_SIDEBAR_SHORTCUT = "alt+shift+s";
 function matchesShortcut(e, shortcut) {
@@ -2322,7 +2322,7 @@ function createAnnotator(options = {}) {
   return api;
 }
 
-// src/plugins/portable-data.ts
+// annotate/src/plugins/portable-data.ts
 var INLINE_MAX_BYTES = 4096;
 function validateAnnotation(value) {
   if (!value || typeof value !== "object") return false;
@@ -2564,7 +2564,7 @@ function createPortableDataPlugin() {
   return plugin;
 }
 
-// src/plugins/global-browser.ts
+// annotate/src/plugins/global-browser.ts
 var MAX_RESULTS = 5e3;
 function hostOf2(url) {
   try {
@@ -2849,7 +2849,7 @@ function createGlobalBrowserPlugin() {
   return plugin;
 }
 
-// src/plugins/chat.ts
+// annotate/src/plugins/chat.ts
 var MAX_PAGE_CHARS = 12e3;
 var MAX_TARGET_CHARS = 4e3;
 var MAX_SURROUNDING_CHARS = 1e3;
@@ -3167,7 +3167,7 @@ function createChatPlugin(options) {
   return plugin;
 }
 
-// src/providers/context-prompt.ts
+// annotate/src/providers/context-prompt.ts
 var SYSTEM_PREAMBLE = "You are helping a user understand and annotate a web page. Answer from the page context below when it is relevant, and say so plainly when it is not. Be concise: lead with the answer, then supporting detail.";
 function buildSystemPrompt(context, preamble = SYSTEM_PREAMBLE) {
   const parts = [preamble, "", "# Page", `Title: ${context.page.title ?? "(untitled)"}`, `URL: ${context.page.normalizedUrl}`];
@@ -3195,7 +3195,7 @@ function buildSystemPrompt(context, preamble = SYSTEM_PREAMBLE) {
   return parts.join("\n");
 }
 
-// src/providers/sse.ts
+// annotate/src/providers/sse.ts
 async function* parseSSE(body) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -3238,7 +3238,7 @@ async function describeError(response, label) {
   return `${label} ${response.status}${detail ? `: ${String(detail).slice(0, 400)}` : ""}`;
 }
 
-// src/providers/claude.ts
+// annotate/src/providers/claude.ts
 var DEFAULT_MODEL = "claude-opus-5";
 var DEFAULT_MAX_TOKENS = 8192;
 var DEFAULT_EFFORT = "medium";
@@ -3295,7 +3295,7 @@ function createClaudeProvider(options) {
   };
 }
 
-// src/providers/openai.ts
+// annotate/src/providers/openai.ts
 var DEFAULT_MODEL2 = "gpt-5";
 var DEFAULT_BASE_URL = "https://api.openai.com/v1";
 var DEFAULT_MAX_TOKENS2 = 4096;
@@ -3346,7 +3346,7 @@ function createOpenAIProvider(options) {
   };
 }
 
-// src/plugins/excalidraw.ts
+// annotate/src/plugins/excalidraw.ts
 function isExcalidrawAttachment(att) {
   return att.type === "excalidraw";
 }

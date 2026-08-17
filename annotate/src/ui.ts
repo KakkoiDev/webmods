@@ -306,7 +306,7 @@ export class AnnotatorUI {
     const label = this.doc.createElement("span");
     label.className = "wm-corner-label";
     label.id = "wm-corner-mode-label";
-    label.textContent = "Edit mode";
+    label.textContent = "Annotate mode";
     const toggle = this.makeModeSwitch();
     toggle.setAttribute("aria-labelledby", label.id);
     row.append(label, toggle);
@@ -566,6 +566,10 @@ export class AnnotatorUI {
       row.appendChild(save);
       composer.appendChild(row);
 
+      // Shadow DOM retargets our keystrokes to the host element, so a page-level
+      // handler reads them as typing outside any field. Notion answers Backspace
+      // by deleting from its own block and taking focus back.
+
       composer.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
           e.stopPropagation();
@@ -713,9 +717,9 @@ export class AnnotatorUI {
     const modeGroup = this.doc.createElement("span");
     modeGroup.className = "wm-header-switch";
     const modeLabel = this.doc.createElement("span");
-    modeLabel.textContent = "Edit";
+    modeLabel.textContent = "Annotate";
     const modeSwitch = this.makeModeSwitch();
-    modeSwitch.setAttribute("aria-label", "Edit mode");
+    modeSwitch.setAttribute("aria-label", "Annotate mode");
     modeSwitch.title = "Annotate mode (Alt+Shift+A)";
     modeGroup.append(modeLabel, modeSwitch);
     this.tabBar.appendChild(modeGroup);
