@@ -140,6 +140,59 @@ describe("global browser plugin", () => {
     ]);
   });
 
+  it("gathers pages of one host under a site section when grouping is on", async () => {
+    const { storage, a } = await seed();
+    const second = makePage("pg_docs2", "https://docs.example.com/tokens", "Token reference");
+    await storage.save(makeNote("d3", second.id, second.url, "expiry is wrong", { updatedAt: 400 }), second);
+    a.use(createGlobalBrowserPlugin());
+    a.commands.execute("browser.open");
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(shadow().querySelectorAll(".wm-gb-site")).toHaveLength(0);
+    const toggle = shadow().querySelector<HTMLElement>(".wm-gb-controls [role=switch]")!;
+    expect(shadow().querySelector(".wm-gb-controls label")!.textContent).toBe("Group by site");
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+    toggle.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 50));
+
+    const sections = [...shadow().querySelectorAll<HTMLElement>(".wm-gb-site")];
+    expect(sections.map((s) => s.dataset.host)).toEqual(["blog.other.dev", "docs.example.com"]);
+    expect(sections.map((s) => s.querySelectorAll(".wm-gb-page").length)).toEqual([1, 2]);
+    expect(sections[1].querySelector(".wm-gb-site-count")!.textContent).toBe("3 notes on 2 pages");
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+
+    // Collapsing a site hides its pages but keeps its header.
+    sections[1].querySelector<HTMLElement>(".wm-gb-site-head")!.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true })
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    const after = [...shadow().querySelectorAll<HTMLElement>(".wm-gb-site")];
+    expect(after[1].querySelector(".wm-gb-site-head")!.getAttribute("aria-expanded")).toBe("false");
+    expect(after[1].querySelectorAll(".wm-gb-page")).toHaveLength(0);
+    expect(after[0].querySelectorAll(".wm-gb-page")).toHaveLength(1);
+  });
+
+  it("keeps the grouping choice across a tab remount", async () => {
+    const { a } = await seed();
+    a.use(createGlobalBrowserPlugin());
+    a.commands.execute("browser.open");
+    await new Promise((r) => setTimeout(r, 50));
+    shadow()
+      .querySelector<HTMLElement>(".wm-gb-controls [role=switch]")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(shadow().querySelectorAll(".wm-gb-site")).toHaveLength(2);
+
+    const notesTab = [...shadow().querySelectorAll<HTMLElement>(".wm-tab[role=tab]")].find((t) => t.dataset.tabId === "notes")!;
+    notesTab.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    a.commands.execute("browser.open");
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(shadow().querySelector<HTMLElement>(".wm-gb-controls [role=switch]")!.getAttribute("aria-checked")).toBe("true");
+    expect(shadow().querySelectorAll(".wm-gb-site")).toHaveLength(2);
+  });
+
   it("degrades to a message when the adapter cannot list all pages", async () => {
     const inner = createMemoryStorage();
     const limited: AnnotationStorage = {

@@ -108,7 +108,17 @@ const CSS = `
 }
 .wm-gb input:focus { outline: 2px solid #6366f1; outline-offset: -1px; }
 .wm-gb-summary { font-size: 12px; color: #57606a; }
+.wm-gb-controls { display: flex; align-items: center; gap: 6px; }
+.wm-gb-controls label { font-size: 12px; color: #57606a; }
 .wm-gb-list { flex: 1; overflow: auto; }
+.wm-gb-site { margin-bottom: 10px; }
+.wm-gb-site-head {
+  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  border: 0; background: none; color: #1f2328; padding: 2px 0 6px;
+}
+.wm-gb-site-head:focus-visible { outline: 2px solid #6366f1; }
+.wm-gb-site-count { font-size: 11px; font-weight: 400; color: #57606a; }
 .wm-gb-page { border: 1px solid #d0d7de; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
 .wm-gb-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #f6f8fa; }
 .wm-gb-toggle {
@@ -138,6 +148,8 @@ export function createGlobalBrowserPlugin(): GlobalBrowserPlugin {
   let ctx: PluginContext | null = null;
   const cleanups: Array<() => void> = [];
   let render: (() => void) | null = null;
+  // Outlives a tab remount, so switching tabs does not reset the choice.
+  let groupBySite = false;
 
   const requireCtx = (): PluginContext => {
     if (!ctx) throw new Error("global-browser plugin is not attached to an annotator (call annotator.use(plugin) first)");
@@ -204,9 +216,27 @@ export function createGlobalBrowserPlugin(): GlobalBrowserPlugin {
             const summary = document.createElement("div");
             summary.className = "wm-gb-summary";
 
+            const controls = document.createElement("div");
+            controls.className = "wm-gb-controls";
+            const groupLabel = document.createElement("label");
+            groupLabel.id = "wm-gb-group-label";
+            groupLabel.textContent = "Group by site";
+            const groupSwitch = document.createElement("button");
+            groupSwitch.type = "button";
+            groupSwitch.className = "wm-switch";
+            groupSwitch.setAttribute("role", "switch");
+            groupSwitch.setAttribute("aria-labelledby", groupLabel.id);
+            groupSwitch.setAttribute("aria-checked", String(groupBySite));
+            groupSwitch.addEventListener("click", () => {
+              groupBySite = !groupBySite;
+              groupSwitch.setAttribute("aria-checked", String(groupBySite));
+              void paint();
+            });
+            controls.append(groupLabel, groupSwitch);
+
             const list = document.createElement("div");
             list.className = "wm-gb-list";
-            root.append(input, summary, list);
+            root.append(input, summary, controls, list);
 
             const collapsed = new Set<string>();
             let generation = 0;
@@ -253,7 +283,7 @@ export function createGlobalBrowserPlugin(): GlobalBrowserPlugin {
               // Browsing without a query and lots of pages: start collapsed.
               const collapseByDefault = !query && byPage.size > 5;
 
-              for (const [pageId, group] of byPage) {
+              const buildPageCard = (pageId: string, group: GlobalSearchResult[]): HTMLElement => {
                 const identity = group[0].page;
                 const card = document.createElement("div");
                 card.className = "wm-gb-page";
@@ -268,10 +298,13 @@ export function createGlobalBrowserPlugin(): GlobalBrowserPlugin {
                 toggle.className = "wm-gb-toggle";
                 toggle.setAttribute("aria-expanded", String(!isCollapsed));
                 toggle.textContent = identity.title || identity.normalizedUrl;
-                const host = document.createElement("span");
-                host.className = "wm-gb-host";
-                host.textContent = ` — ${hostOf(identity.normalizedUrl)}`;
-                toggle.appendChild(host);
+                // Under a site section the host already sits in the section header.
+                if (!groupBySite) {
+                  const host = document.createElement("span");
+                  host.className = "wm-gb-host";
+                  host.textContent = ` — ${hostOf(identity.normalizedUrl)}`;
+                  toggle.appendChild(host);
+                }
                 toggle.addEventListener("click", () => {
                   if (collapsed.has(pageId)) {
                     collapsed.delete(pageId);
@@ -330,7 +363,57 @@ export function createGlobalBrowserPlugin(): GlobalBrowserPlugin {
                     card.appendChild(row);
                   }
                 }
-                list.appendChild(card);
+                return card;
+              };
+
+              if (!groupBySite) {
+                for (const [pageId, group] of byPage) list.appendChild(buildPageCard(pageId, group));
+                return;
+              }
+
+              // Grouped by host, not by registrable domain: without a public
+              // suffix list, trimming labels would merge unrelated sites
+              // (two different github.io pages) and split real ones.
+              const bySite = new Map<string, Array<[string, GlobalSearchResult[]]>>();
+              for (const entry of byPage) {
+                const host = hostOf(entry[1][0].page.normalizedUrl);
+                const bucket = bySite.get(host) ?? [];
+                bucket.push(entry);
+                bySite.set(host, bucket);
+              }
+
+              for (const host of [...bySite.keys()].sort()) {
+                const entries = bySite.get(host)!;
+                const notes = entries.reduce((sum, [, group]) => sum + group.length, 0);
+                const key = `site:${host}`;
+                const siteCollapsed = collapsed.has(key);
+
+                const section = document.createElement("div");
+                section.className = "wm-gb-site";
+                section.dataset.host = host;
+
+                const head = document.createElement("button");
+                head.type = "button";
+                head.className = "wm-gb-site-head";
+                head.setAttribute("aria-expanded", String(!siteCollapsed));
+                head.textContent = host;
+                const siteCount = document.createElement("span");
+                siteCount.className = "wm-gb-site-count";
+                siteCount.textContent = `${notes} note${notes === 1 ? "" : "s"} on ${entries.length} page${
+                  entries.length === 1 ? "" : "s"
+                }`;
+                head.appendChild(siteCount);
+                head.addEventListener("click", () => {
+                  if (siteCollapsed) collapsed.delete(key);
+                  else collapsed.add(key);
+                  void paint();
+                });
+                section.appendChild(head);
+
+                if (!siteCollapsed) {
+                  for (const [pageId, group] of entries) section.appendChild(buildPageCard(pageId, group));
+                }
+                list.appendChild(section);
               }
             };
 

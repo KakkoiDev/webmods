@@ -2,7 +2,7 @@
 // @name         Webmods Annotate
 // @namespace    http://tampermonkey.net/
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM2MzY2ZjEiLz48dGV4dCB4PSIzMiIgeT0iNDIiIGZvbnQtc2l6ZT0iMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuKcj++4jzwvdGV4dD48L3N2Zz4=
-// @version      2026.08.18.6
+// @version      2026.08.18.7
 // @description  Annotate any web page with Markdown notes - robust anchors, cross-site Tampermonkey storage, notes sidebar, shareable note links, JSON export/import (Alt+Shift+A)
 // @author       KakkoiDev
 // @match        *://*/*
@@ -18,7 +18,7 @@
 
 "use strict";
 (() => {
-  // annotate/src/blocks.ts
+  // src/blocks.ts
   var SEMANTIC_TAGS = /* @__PURE__ */ new Set([
     "ARTICLE",
     "SECTION",
@@ -158,7 +158,7 @@
     };
   }
 
-  // annotate/src/text-utils.ts
+  // src/text-utils.ts
   function normalizeText(text) {
     return text.replace(/\s+/g, " ").trim();
   }
@@ -182,7 +182,7 @@
     return 2 * matches / (a.length + b.length - 2);
   }
 
-  // annotate/src/ranges.ts
+  // src/ranges.ts
   var QUOTE_MAX = 300;
   var CONTEXT_CHARS = 32;
   function blockTextWithMap(block) {
@@ -358,7 +358,7 @@
     return buildRange(map, bestAt, Math.min(map.text.length, bestAt + len));
   }
 
-  // annotate/src/anchors.ts
+  // src/anchors.ts
   var QUOTE_MAX2 = 300;
   var CONTEXT_MAX = 60;
   var STABLE_ATTRS = ["id", "data-testid", "data-qa", "data-test", "name", "aria-label", "role", "href", "title"];
@@ -574,13 +574,13 @@
     return { status: "detached", reason: "no candidate matched with sufficient confidence" };
   }
 
-  // annotate/src/archive.ts
+  // src/archive.ts
   var ARCHIVED_KEY = "archived";
   function isArchived(annotation) {
     return typeof annotation.metadata?.[ARCHIVED_KEY] === "number";
   }
 
-  // annotate/src/commands.ts
+  // src/commands.ts
   function createCommandRegistry() {
     const commands = /* @__PURE__ */ new Map();
     return {
@@ -600,7 +600,7 @@
     };
   }
 
-  // annotate/src/dom-utils.ts
+  // src/dom-utils.ts
   function download(filename, text, type) {
     const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
@@ -619,7 +619,7 @@
     await navigator.clipboard.writeText(text);
   }
 
-  // annotate/src/events.ts
+  // src/events.ts
   var Emitter = class {
     constructor() {
       this.handlers = /* @__PURE__ */ new Map();
@@ -661,12 +661,12 @@
     return `${time}${rand}`;
   }
 
-  // annotate/src/types.ts
+  // src/types.ts
   var SCHEMA_VERSION = 1;
   var NOTE_FRAGMENT_PARAM = "wm-note";
   var INLINE_FRAGMENT_PARAM = "wm";
 
-  // annotate/src/page-identity.ts
+  // src/page-identity.ts
   var DEFAULT_TRACKING_PARAMS = [
     "utm_source",
     "utm_medium",
@@ -735,7 +735,7 @@
     };
   }
 
-  // annotate/src/storage.ts
+  // src/storage.ts
   function emptyDB() {
     return { schemaVersion: SCHEMA_VERSION, pages: {} };
   }
@@ -878,7 +878,7 @@
     );
   }
 
-  // annotate/src/markdown.ts
+  // src/markdown.ts
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
@@ -976,7 +976,7 @@
     return html.join("\n");
   }
 
-  // annotate/src/ui.ts
+  // src/ui.ts
   var CSS2 = `
 :host { all: initial; }
 * { box-sizing: border-box; }
@@ -1806,7 +1806,7 @@ button.wm-corner-sidebar { width: 100%; }
     }
   };
 
-  // annotate/src/annotator.ts
+  // src/annotator.ts
   var DEFAULT_SHORTCUT = "alt+shift+a";
   var DEFAULT_SIDEBAR_SHORTCUT = "alt+shift+s";
   function matchesShortcut(e, shortcut) {
@@ -2255,7 +2255,7 @@ button.wm-corner-sidebar { width: 100%; }
     return api;
   }
 
-  // annotate/src/plugins/chat.ts
+  // src/plugins/chat.ts
   var MAX_PAGE_CHARS = 12e3;
   var MAX_TARGET_CHARS = 4e3;
   var MAX_SURROUNDING_CHARS = 1e3;
@@ -2560,7 +2560,7 @@ button.wm-corner-sidebar { width: 100%; }
     return plugin;
   }
 
-  // annotate/src/plugins/portable-data.ts
+  // src/plugins/portable-data.ts
   var INLINE_MAX_BYTES = 4096;
   function validateAnnotation(value) {
     if (!value || typeof value !== "object") return false;
@@ -2802,7 +2802,7 @@ button.wm-corner-sidebar { width: 100%; }
     return plugin;
   }
 
-  // annotate/src/plugins/global-browser.ts
+  // src/plugins/global-browser.ts
   var MAX_RESULTS = 5e3;
   function hostOf2(url) {
     try {
@@ -2871,7 +2871,17 @@ button.wm-corner-sidebar { width: 100%; }
 }
 .wm-gb input:focus { outline: 2px solid #6366f1; outline-offset: -1px; }
 .wm-gb-summary { font-size: 12px; color: #57606a; }
+.wm-gb-controls { display: flex; align-items: center; gap: 6px; }
+.wm-gb-controls label { font-size: 12px; color: #57606a; }
 .wm-gb-list { flex: 1; overflow: auto; }
+.wm-gb-site { margin-bottom: 10px; }
+.wm-gb-site-head {
+  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  border: 0; background: none; color: #1f2328; padding: 2px 0 6px;
+}
+.wm-gb-site-head:focus-visible { outline: 2px solid #6366f1; }
+.wm-gb-site-count { font-size: 11px; font-weight: 400; color: #57606a; }
 .wm-gb-page { border: 1px solid #d0d7de; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
 .wm-gb-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #f6f8fa; }
 .wm-gb-toggle {
@@ -2900,6 +2910,7 @@ button.wm-corner-sidebar { width: 100%; }
     let ctx = null;
     const cleanups = [];
     let render = null;
+    let groupBySite = false;
     const requireCtx = () => {
       if (!ctx) throw new Error("global-browser plugin is not attached to an annotator (call annotator.use(plugin) first)");
       return ctx;
@@ -2951,9 +2962,26 @@ button.wm-corner-sidebar { width: 100%; }
               input.placeholder = "Search notes\u2026 (site:example.com to filter)";
               const summary = document.createElement("div");
               summary.className = "wm-gb-summary";
+              const controls = document.createElement("div");
+              controls.className = "wm-gb-controls";
+              const groupLabel = document.createElement("label");
+              groupLabel.id = "wm-gb-group-label";
+              groupLabel.textContent = "Group by site";
+              const groupSwitch = document.createElement("button");
+              groupSwitch.type = "button";
+              groupSwitch.className = "wm-switch";
+              groupSwitch.setAttribute("role", "switch");
+              groupSwitch.setAttribute("aria-labelledby", groupLabel.id);
+              groupSwitch.setAttribute("aria-checked", String(groupBySite));
+              groupSwitch.addEventListener("click", () => {
+                groupBySite = !groupBySite;
+                groupSwitch.setAttribute("aria-checked", String(groupBySite));
+                void paint();
+              });
+              controls.append(groupLabel, groupSwitch);
               const list = document.createElement("div");
               list.className = "wm-gb-list";
-              root.append(input, summary, list);
+              root.append(input, summary, controls, list);
               const collapsed = /* @__PURE__ */ new Set();
               let generation = 0;
               const paint = async () => {
@@ -2990,7 +3018,7 @@ button.wm-corner-sidebar { width: 100%; }
                   return;
                 }
                 const collapseByDefault = !query && byPage.size > 5;
-                for (const [pageId, group] of byPage) {
+                const buildPageCard = (pageId, group) => {
                   const identity = group[0].page;
                   const card = document.createElement("div");
                   card.className = "wm-gb-page";
@@ -3003,10 +3031,12 @@ button.wm-corner-sidebar { width: 100%; }
                   toggle.className = "wm-gb-toggle";
                   toggle.setAttribute("aria-expanded", String(!isCollapsed));
                   toggle.textContent = identity.title || identity.normalizedUrl;
-                  const host = document.createElement("span");
-                  host.className = "wm-gb-host";
-                  host.textContent = ` \u2014 ${hostOf2(identity.normalizedUrl)}`;
-                  toggle.appendChild(host);
+                  if (!groupBySite) {
+                    const host = document.createElement("span");
+                    host.className = "wm-gb-host";
+                    host.textContent = ` \u2014 ${hostOf2(identity.normalizedUrl)}`;
+                    toggle.appendChild(host);
+                  }
                   toggle.addEventListener("click", () => {
                     if (collapsed.has(pageId)) {
                       collapsed.delete(pageId);
@@ -3057,7 +3087,46 @@ button.wm-corner-sidebar { width: 100%; }
                       card.appendChild(row);
                     }
                   }
-                  list.appendChild(card);
+                  return card;
+                };
+                if (!groupBySite) {
+                  for (const [pageId, group] of byPage) list.appendChild(buildPageCard(pageId, group));
+                  return;
+                }
+                const bySite = /* @__PURE__ */ new Map();
+                for (const entry of byPage) {
+                  const host = hostOf2(entry[1][0].page.normalizedUrl);
+                  const bucket = bySite.get(host) ?? [];
+                  bucket.push(entry);
+                  bySite.set(host, bucket);
+                }
+                for (const host of [...bySite.keys()].sort()) {
+                  const entries = bySite.get(host);
+                  const notes = entries.reduce((sum, [, group]) => sum + group.length, 0);
+                  const key = `site:${host}`;
+                  const siteCollapsed = collapsed.has(key);
+                  const section = document.createElement("div");
+                  section.className = "wm-gb-site";
+                  section.dataset.host = host;
+                  const head = document.createElement("button");
+                  head.type = "button";
+                  head.className = "wm-gb-site-head";
+                  head.setAttribute("aria-expanded", String(!siteCollapsed));
+                  head.textContent = host;
+                  const siteCount = document.createElement("span");
+                  siteCount.className = "wm-gb-site-count";
+                  siteCount.textContent = `${notes} note${notes === 1 ? "" : "s"} on ${entries.length} page${entries.length === 1 ? "" : "s"}`;
+                  head.appendChild(siteCount);
+                  head.addEventListener("click", () => {
+                    if (siteCollapsed) collapsed.delete(key);
+                    else collapsed.add(key);
+                    void paint();
+                  });
+                  section.appendChild(head);
+                  if (!siteCollapsed) {
+                    for (const [pageId, group] of entries) section.appendChild(buildPageCard(pageId, group));
+                  }
+                  list.appendChild(section);
                 }
               };
               render = () => void paint();
@@ -3087,7 +3156,7 @@ button.wm-corner-sidebar { width: 100%; }
     return plugin;
   }
 
-  // annotate/src/plugins/excalidraw.ts
+  // src/plugins/excalidraw.ts
   function isExcalidrawAttachment(att) {
     return att.type === "excalidraw";
   }
@@ -3250,7 +3319,7 @@ button.wm-corner-sidebar { width: 100%; }
     };
   }
 
-  // annotate/src/providers/context-prompt.ts
+  // src/providers/context-prompt.ts
   var SYSTEM_PREAMBLE = "You are helping a user understand and annotate a web page. Answer from the page context below when it is relevant, and say so plainly when it is not. Be concise: lead with the answer, then supporting detail.";
   function buildSystemPrompt(context, preamble = SYSTEM_PREAMBLE) {
     const parts = [preamble, "", "# Page", `Title: ${context.page.title ?? "(untitled)"}`, `URL: ${context.page.normalizedUrl}`];
@@ -3278,7 +3347,7 @@ button.wm-corner-sidebar { width: 100%; }
     return parts.join("\n");
   }
 
-  // annotate/src/providers/sse.ts
+  // src/providers/sse.ts
   async function* parseSSE(body) {
     const reader = body.getReader();
     const decoder = new TextDecoder();
@@ -3321,7 +3390,7 @@ button.wm-corner-sidebar { width: 100%; }
     return `${label} ${response.status}${detail ? `: ${String(detail).slice(0, 400)}` : ""}`;
   }
 
-  // annotate/src/providers/claude.ts
+  // src/providers/claude.ts
   var DEFAULT_MODEL = "claude-opus-5";
   var DEFAULT_MAX_TOKENS = 8192;
   var DEFAULT_EFFORT = "medium";
@@ -3378,7 +3447,7 @@ button.wm-corner-sidebar { width: 100%; }
     };
   }
 
-  // annotate/src/providers/openai.ts
+  // src/providers/openai.ts
   var DEFAULT_MODEL2 = "gpt-5";
   var DEFAULT_BASE_URL = "https://api.openai.com/v1";
   var DEFAULT_MAX_TOKENS2 = 4096;
@@ -3429,7 +3498,7 @@ button.wm-corner-sidebar { width: 100%; }
     };
   }
 
-  // annotate/src/userscript.ts
+  // src/userscript.ts
   function pickFile(accept) {
     return new Promise((resolve) => {
       const input = document.createElement("input");
@@ -3525,6 +3594,6 @@ button.wm-corner-sidebar { width: 100%; }
     globalThis.__wmAnnotate = annotator;
   }
 
-  // annotate/src/userscript-main.ts
+  // src/userscript-main.ts
   startUserscript();
 })();

@@ -999,6 +999,22 @@ Archiving keeps a note but takes it out of the way.
 
 ---
 
+## 29b-bis. Grouping the All pages list by site
+
+A `Group by site` switch above the list gathers page cards under one section per
+host.
+
+- grouping is by host, not by registrable domain: without a public suffix list,
+  trimming labels would merge unrelated sites (two `github.io` pages) and split
+  real ones;
+- each section header carries the host and its note and page totals, and
+  collapses to hide its pages;
+- a grouped page card drops its host suffix, which the section header carries;
+- the choice lives in the plugin, so switching sidebar tabs keeps it, and a
+  page reload starts ungrouped.
+
+---
+
 ## 29c. Corner widget
 
 A small panel in the bottom-right corner, revealed by the pointer resting in a
