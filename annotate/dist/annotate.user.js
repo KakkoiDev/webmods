@@ -2,7 +2,7 @@
 // @name         Webmods Annotate
 // @namespace    http://tampermonkey.net/
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM2MzY2ZjEiLz48dGV4dCB4PSIzMiIgeT0iNDIiIGZvbnQtc2l6ZT0iMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuKcj++4jzwvdGV4dD48L3N2Zz4=
-// @version      2026.08.18.8
+// @version      2026.08.18.9
 // @description  Annotate any web page with Markdown notes - robust anchors, cross-site Tampermonkey storage, notes sidebar, shareable note links, JSON export/import (Alt+Shift+A)
 // @author       KakkoiDev
 // @match        *://*/*
@@ -11,6 +11,8 @@
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
+// @grant        GM_xmlhttpRequest
+// @connect      api.github.com
 // @license      MIT
 // @updateURL    https://raw.githubusercontent.com/KakkoiDev/webmods/main/scripts/webmods-annotate.user.js
 // @downloadURL  https://raw.githubusercontent.com/KakkoiDev/webmods/main/scripts/webmods-annotate.user.js
@@ -3337,6 +3339,197 @@ button.wm-corner-sidebar { width: 100%; }
     };
   }
 
+  // src/plugins/gist.ts
+  var GIST_TOKEN_SETTING = "gist.token";
+  var GIST_URL_SETTING = "gist.url";
+  var GIST_FILENAME = "webmods-annotations.json";
+  var API = "https://api.github.com";
+  function parseGistId(input) {
+    const text = (input ?? "").trim();
+    if (!text) return null;
+    if (/^[0-9a-f]{20,}$/i.test(text)) return text;
+    let url;
+    try {
+      url = new URL(text);
+    } catch {
+      return null;
+    }
+    const host = url.host.toLowerCase();
+    if (host !== "gist.github.com" && host !== "api.github.com" && host !== "gist.github.com:443") return null;
+    const parts = url.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1];
+    return last && /^[0-9a-f]{20,}$/i.test(last) ? last : null;
+  }
+  function hostOf3(url) {
+    try {
+      return new URL(url).host || null;
+    } catch {
+      return null;
+    }
+  }
+  function scopeLabel(scope, host) {
+    if (scope === "all") return "all sites";
+    if (scope === "page") return "this page";
+    return host ?? "this site";
+  }
+  function createGistPlugin(options = {}) {
+    let ctx = null;
+    const cleanups = [];
+    const requireCtx = () => {
+      if (!ctx) throw new Error("gist plugin is not attached to an annotator (call annotator.use(plugin) first)");
+      return ctx;
+    };
+    const ask = options.prompt ?? ((message, initial) => globalThis.prompt?.(message, initial) ?? null);
+    const notify = options.notify ?? ((message) => globalThis.alert?.(message));
+    const getSetting = async (key) => {
+      const value = await requireCtx().storage.getSetting?.(key);
+      return typeof value === "string" && value ? value : null;
+    };
+    const setSetting = async (key, value) => {
+      await requireCtx().storage.setSetting?.(key, value ?? void 0);
+    };
+    async function resolveToken(explicit) {
+      const stored = explicit ?? await getSetting(GIST_TOKEN_SETTING);
+      if (stored) return stored;
+      const entered = ask(
+        "GitHub token with the gist scope (stored in Tampermonkey storage only, never exported).\n\nCreate one at https://github.com/settings/tokens - a fine-grained token needs the Gists read and write permission; a classic token needs the gist scope.",
+        ""
+      );
+      const token = entered?.trim();
+      if (!token) throw new Error("A GitHub token with the gist scope is required to upload.");
+      await setSetting(GIST_TOKEN_SETTING, token);
+      return token;
+    }
+    async function upload(scope, opts = {}) {
+      const c = requireCtx();
+      const page = c.getPage();
+      const token = await resolveToken(opts.token);
+      const id = parseGistId(opts.url ?? await getSetting(GIST_URL_SETTING));
+      const pages = filterPagesByScope(await collectPages(c.storage, page), page, scope);
+      const notes = pages.reduce((sum, p) => sum + p.annotations.length, 0);
+      const doc = {
+        format: "wm-annotate-export",
+        schemaVersion: SCHEMA_VERSION,
+        exportedAt: Date.now(),
+        pages
+      };
+      const body = {
+        description: `webmods annotate: ${scopeLabel(scope, hostOf3(page.normalizedUrl))}, ${notes} note${notes === 1 ? "" : "s"} on ${pages.length} page${pages.length === 1 ? "" : "s"}`,
+        // GitHub calls these secret gists: unlisted and not searchable, but
+        // readable by anyone who has the URL.
+        public: false,
+        files: { [GIST_FILENAME]: { content: JSON.stringify(doc, null, 2) } }
+      };
+      const doFetch = options.fetchFn ?? globalThis.fetch.bind(globalThis);
+      const response = await doFetch(id ? `${API}/gists/${id}` : `${API}/gists`, {
+        method: id ? "PATCH" : "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${token}`,
+          "x-github-api-version": "2022-11-28"
+        },
+        body: JSON.stringify(body)
+      });
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch {
+        payload = {};
+      }
+      if (!response.ok) {
+        const detail = payload.message ? `: ${payload.message}` : "";
+        if (response.status === 401) throw new Error(`GitHub rejected the token (401)${detail}`);
+        if (response.status === 404 && id) {
+          throw new Error(`Gist ${id} not found, or the token cannot write to it (404)${detail}`);
+        }
+        throw new Error(`GitHub gist upload failed (${response.status})${detail}`);
+      }
+      const url = payload.html_url;
+      const gistId = payload.id;
+      if (!url || !gistId) throw new Error("GitHub returned no gist URL");
+      await setSetting(GIST_URL_SETTING, url);
+      return { id: gistId, url, created: !id, notes, pages: pages.length };
+    }
+    const run = (scope) => {
+      void upload(scope).then(async (result) => {
+        await copyText(result.url).catch(() => {
+        });
+        notify(
+          `${result.created ? "Created" : "Updated"} secret gist with ${result.notes} note${result.notes === 1 ? "" : "s"} on ${result.pages} page${result.pages === 1 ? "" : "s"}.
+
+${result.url}
+
+(URL copied to the clipboard.)`
+        );
+      }).catch((err) => notify(`Gist upload failed: ${err instanceof Error ? err.message : err}`));
+    };
+    const plugin = {
+      name: "gist",
+      setup(pluginCtx) {
+        ctx = pluginCtx;
+        cleanups.push(
+          pluginCtx.commands.register("gist.upload", (scope) => upload(scope ?? "all"))
+        );
+        cleanups.push(
+          pluginCtx.addHeaderAction({
+            id: "gist",
+            label: "Gist",
+            title: "Upload notes to a secret GitHub gist",
+            items: () => {
+              const host = hostOf3(pluginCtx.getPage().normalizedUrl);
+              const entries = [
+                { group: "Upload to a secret gist" },
+                { label: `This site${host ? ` (${host})` : ""}`, onClick: () => run("site") },
+                { label: "All sites", onClick: () => run("all") },
+                { group: "Settings" },
+                {
+                  label: "GitHub token\u2026",
+                  onClick: () => {
+                    void (async () => {
+                      const entered = ask(
+                        "GitHub token with the gist scope. Blank clears it.",
+                        await getSetting(GIST_TOKEN_SETTING) ?? ""
+                      );
+                      if (entered === null) return;
+                      await setSetting(GIST_TOKEN_SETTING, entered.trim() || null);
+                    })();
+                  }
+                },
+                {
+                  label: "Target gist\u2026",
+                  onClick: () => {
+                    void (async () => {
+                      const current = await getSetting(GIST_URL_SETTING) ?? "";
+                      const entered = ask(
+                        "Gist URL to update. Blank creates a new secret gist on the next upload.",
+                        current
+                      );
+                      if (entered === null) return;
+                      const trimmed = entered.trim();
+                      if (trimmed && !parseGistId(trimmed)) {
+                        notify("That does not look like a gist URL or id. Nothing saved.");
+                        return;
+                      }
+                      await setSetting(GIST_URL_SETTING, trimmed || null);
+                    })();
+                  }
+                }
+              ];
+              return entries;
+            }
+          })
+        );
+      },
+      destroy() {
+        for (const off of cleanups.splice(0)) off();
+        ctx = null;
+      },
+      upload
+    };
+    return plugin;
+  }
+
   // src/providers/context-prompt.ts
   var SYSTEM_PREAMBLE = "You are helping a user understand and annotate a web page. Answer from the page context below when it is relevant, and say so plainly when it is not. Be concise: lead with the answer, then supporting detail.";
   function buildSystemPrompt(context, preamble = SYSTEM_PREAMBLE) {
@@ -3517,6 +3710,23 @@ button.wm-corner-sidebar { width: 100%; }
   }
 
   // src/userscript.ts
+  function gmFetch(input, init = {}) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: init.method ?? "GET",
+        url: String(input),
+        headers: init.headers ?? {},
+        data: typeof init.body === "string" ? init.body : void 0,
+        onload: (response) => resolve({
+          ok: response.status >= 200 && response.status < 300,
+          status: response.status,
+          json: async () => JSON.parse(response.responseText),
+          text: async () => response.responseText
+        }),
+        onerror: (error) => reject(error instanceof Error ? error : new Error(String(error)))
+      });
+    });
+  }
   function pickFile(accept) {
     return new Promise((resolve) => {
       const input = document.createElement("input");
@@ -3548,6 +3758,8 @@ button.wm-corner-sidebar { width: 100%; }
     annotator.use(portable);
     annotator.use(createExcalidrawPlugin());
     annotator.use(createGlobalBrowserPlugin());
+    const gist = createGistPlugin({ fetchFn: typeof GM_xmlhttpRequest === "function" ? gmFetch : void 0 });
+    annotator.use(gist);
     void (async () => {
       const apiKey = await storage.getSetting(CHAT_KEY_SETTING);
       if (!apiKey) return;
@@ -3566,6 +3778,8 @@ button.wm-corner-sidebar { width: 100%; }
       GM_registerMenuCommand("Export this site (Markdown)", () => portable.downloadExport("markdown", { scope: "site" }));
       GM_registerMenuCommand("Export all sites (JSON)", () => portable.downloadExport("json", { scope: "all" }));
       GM_registerMenuCommand("Export all sites (Markdown)", () => portable.downloadExport("markdown", { scope: "all" }));
+      GM_registerMenuCommand("Upload this site to a secret gist", () => void annotator.commands.execute("gist.upload", "site"));
+      GM_registerMenuCommand("Upload all sites to a secret gist", () => void annotator.commands.execute("gist.upload", "all"));
       GM_registerMenuCommand("Configure AI chat\u2026", async () => {
         const currentKind = await storage.getSetting(CHAT_PROVIDER_SETTING) ?? "anthropic";
         const kindInput = prompt(

@@ -7,6 +7,7 @@ import { createAnnotator } from "./annotator";
 import { createChatPlugin } from "./plugins/chat";
 import { createGlobalBrowserPlugin } from "./plugins/global-browser";
 import { createExcalidrawPlugin } from "./plugins/excalidraw";
+import { createGistPlugin } from "./plugins/gist";
 import { createPortableDataPlugin } from "./plugins/portable-data";
 import { createClaudeProvider } from "./providers/claude";
 import { createOpenAIProvider } from "./providers/openai";
@@ -14,6 +15,43 @@ import type { ChatProvider } from "./plugins/chat";
 import { createTampermonkeyStorage } from "./storage";
 
 declare function GM_registerMenuCommand(caption: string, onClick: () => void): void;
+
+interface GMResponse {
+  status: number;
+  responseText: string;
+}
+
+declare function GM_xmlhttpRequest(details: {
+  method: string;
+  url: string;
+  headers?: Record<string, string>;
+  data?: string;
+  onload(response: GMResponse): void;
+  onerror(error: unknown): void;
+}): void;
+
+/**
+ * fetch over GM_xmlhttpRequest. A page CSP (Notion, GitHub) blocks a direct
+ * fetch to api.github.com, and the userscript sandbox is not bound by it.
+ */
+function gmFetch(input: URL | RequestInfo, init: RequestInit = {}): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    GM_xmlhttpRequest({
+      method: init.method ?? "GET",
+      url: String(input),
+      headers: (init.headers as Record<string, string>) ?? {},
+      data: typeof init.body === "string" ? init.body : undefined,
+      onload: (response) =>
+        resolve({
+          ok: response.status >= 200 && response.status < 300,
+          status: response.status,
+          json: async () => JSON.parse(response.responseText),
+          text: async () => response.responseText,
+        } as Response),
+      onerror: (error) => reject(error instanceof Error ? error : new Error(String(error))),
+    });
+  });
+}
 
 function pickFile(accept: string): Promise<string | null> {
   return new Promise((resolve) => {
@@ -53,6 +91,8 @@ export function startUserscript(): void {
   annotator.use(createExcalidrawPlugin());
   // Tiny and lazy: all work happens when the All pages tab is opened.
   annotator.use(createGlobalBrowserPlugin());
+  const gist = createGistPlugin({ fetchFn: typeof GM_xmlhttpRequest === "function" ? gmFetch : undefined });
+  annotator.use(gist);
 
   // The Chat tab only exists once an API key is configured; nothing is ever
   // sent anywhere until the user presses Send.
@@ -75,6 +115,8 @@ export function startUserscript(): void {
     GM_registerMenuCommand("Export this site (Markdown)", () => portable.downloadExport("markdown", { scope: "site" }));
     GM_registerMenuCommand("Export all sites (JSON)", () => portable.downloadExport("json", { scope: "all" }));
     GM_registerMenuCommand("Export all sites (Markdown)", () => portable.downloadExport("markdown", { scope: "all" }));
+    GM_registerMenuCommand("Upload this site to a secret gist", () => void annotator.commands.execute("gist.upload", "site"));
+    GM_registerMenuCommand("Upload all sites to a secret gist", () => void annotator.commands.execute("gist.upload", "all"));
     GM_registerMenuCommand("Configure AI chat…", async () => {
       const currentKind = (await storage.getSetting<string>(CHAT_PROVIDER_SETTING)) ?? "anthropic";
       const kindInput = prompt(

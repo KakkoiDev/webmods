@@ -1019,6 +1019,32 @@ host.
 
 ---
 
+## 29b-ter. Gist upload
+
+`createGistPlugin()` adds a `Gist` header dropdown that uploads the JSON export
+to a secret GitHub gist, and a `gist.upload` command taking an export scope.
+
+- `public: false`, which GitHub calls a secret gist: unlisted and not
+  searchable, but readable by anyone holding the URL. It is not access
+  controlled;
+- no stored target: creates a gist and stores the returned URL, so every later
+  upload updates that same gist. A URL passed to `upload()` wins over the
+  stored one, and clearing the setting makes the next upload create a new gist;
+- one stable filename, `webmods-annotations.json`, so an update overwrites
+  rather than piling up dated copies. The scope, note count, and page count go
+  in the gist description;
+- `parseGistId` accepts a `gist.github.com` URL with or without the owner, an
+  API URL, or the bare id;
+- authentication is a GitHub token with gist write access, held in
+  `gist.token` through the storage settings API and never included in an
+  export. Fine-grained tokens need the Gists read and write permission;
+  classic tokens need the `gist` scope. The first upload prompts for it;
+- the userscript routes the request through `GM_xmlhttpRequest`
+  (`@connect api.github.com`), because a page CSP blocks a direct `fetch` to
+  api.github.com. The library default is `fetch`, injectable via `fetchFn`.
+
+---
+
 ## 29c. Corner widget
 
 A small panel in the bottom-right corner, revealed by the pointer resting in a
