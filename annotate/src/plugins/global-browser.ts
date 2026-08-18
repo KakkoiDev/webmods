@@ -112,12 +112,13 @@ const CSS = `
 .wm-gb-controls label { font-size: 12px; color: #57606a; }
 .wm-gb-list { flex: 1; overflow: auto; }
 .wm-gb-site { margin-bottom: 10px; }
-.wm-gb-site-head {
-  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+.wm-gb-site-head { display: flex; align-items: center; gap: 6px; padding: 2px 0 6px; }
+.wm-gb-site-toggle {
+  display: flex; align-items: center; gap: 6px; flex: 1; text-align: left;
   font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
-  border: 0; background: none; color: #1f2328; padding: 2px 0 6px;
+  border: 0; background: none; color: #1f2328; padding: 0;
 }
-.wm-gb-site-head:focus-visible { outline: 2px solid #6366f1; }
+.wm-gb-site-toggle:focus-visible { outline: 2px solid #6366f1; }
 .wm-gb-site-count { font-size: 11px; font-weight: 400; color: #57606a; }
 .wm-gb-page { border: 1px solid #d0d7de; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
 .wm-gb-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #f6f8fa; }
@@ -164,19 +165,23 @@ export function createGlobalBrowserPlugin(): GlobalBrowserPlugin {
     return searchAnnotations(await collectPages(c.storage, c.getPage()), query);
   }
 
-  function exportPage(group: PageGroup): void {
+  function exportDocument(groups: PageGroup[], slug: string): void {
     const doc: ExportDocument = {
       format: "wm-annotate-export",
       schemaVersion: SCHEMA_VERSION,
       exportedAt: Date.now(),
-      pages: [group],
+      pages: groups,
     };
+    download(`webmods-annotations-${slug || "page"}.json`, JSON.stringify(doc, null, 2), "application/json");
+  }
+
+  function exportPage(group: PageGroup): void {
     const slug = (group.identity.title || hostOf(group.identity.normalizedUrl) || "page")
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "")
       .slice(0, 40);
-    download(`webmods-annotations-${slug || "page"}.json`, JSON.stringify(doc, null, 2), "application/json");
+    exportDocument([group], slug);
   }
 
   const plugin: GlobalBrowserPlugin = {
@@ -392,22 +397,42 @@ export function createGlobalBrowserPlugin(): GlobalBrowserPlugin {
                 section.className = "wm-gb-site";
                 section.dataset.host = host;
 
-                const head = document.createElement("button");
-                head.type = "button";
+                const head = document.createElement("div");
                 head.className = "wm-gb-site-head";
-                head.setAttribute("aria-expanded", String(!siteCollapsed));
-                head.textContent = host;
+
+                const siteToggle = document.createElement("button");
+                siteToggle.type = "button";
+                siteToggle.className = "wm-gb-site-toggle";
+                siteToggle.setAttribute("aria-expanded", String(!siteCollapsed));
+                siteToggle.textContent = host;
                 const siteCount = document.createElement("span");
                 siteCount.className = "wm-gb-site-count";
                 siteCount.textContent = `${notes} note${notes === 1 ? "" : "s"} on ${entries.length} page${
                   entries.length === 1 ? "" : "s"
                 }`;
-                head.appendChild(siteCount);
-                head.addEventListener("click", () => {
+                siteToggle.appendChild(siteCount);
+                siteToggle.addEventListener("click", () => {
                   if (siteCollapsed) collapsed.delete(key);
                   else collapsed.add(key);
                   void paint();
                 });
+
+                const siteExport = document.createElement("button");
+                siteExport.type = "button";
+                siteExport.className = "wm-gb-export wm-gb-site-export";
+                siteExport.textContent = "Export site";
+                siteExport.setAttribute("aria-label", `Export every annotation on ${host}`);
+                siteExport.addEventListener("click", () => {
+                  // Every stored page of the host, ignoring the search filter, the
+                  // same way the per-page Export takes the whole page: an export
+                  // that quietly omits notes is a broken backup.
+                  exportDocument(
+                    pages.filter((page) => hostOf(page.identity.normalizedUrl) === host),
+                    host
+                  );
+                });
+
+                head.append(siteToggle, siteExport);
                 section.appendChild(head);
 
                 if (!siteCollapsed) {

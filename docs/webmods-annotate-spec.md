@@ -1007,8 +1007,12 @@ host.
 - grouping is by host, not by registrable domain: without a public suffix list,
   trimming labels would merge unrelated sites (two `github.io` pages) and split
   real ones;
-- each section header carries the host and its note and page totals, and
-  collapses to hide its pages;
+- each section header carries the host, its note and page totals, an
+  `Export site` button, and collapses to hide its pages;
+- `Export site` writes `webmods-annotations-<host>.json` holding every stored
+  page of that host, ignoring the search filter, the same way the per-page
+  `Export` takes the whole page: an export that quietly omits notes is a
+  broken backup;
 - a grouped page card drops its host suffix, which the section header carries;
 - the choice lives in the plugin, so switching sidebar tabs keeps it, and a
   page reload starts ungrouped.

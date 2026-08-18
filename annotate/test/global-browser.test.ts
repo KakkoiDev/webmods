@@ -163,14 +163,78 @@ describe("global browser plugin", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("true");
 
     // Collapsing a site hides its pages but keeps its header.
-    sections[1].querySelector<HTMLElement>(".wm-gb-site-head")!.dispatchEvent(
+    sections[1].querySelector<HTMLElement>(".wm-gb-site-toggle")!.dispatchEvent(
       new MouseEvent("click", { bubbles: true, cancelable: true })
     );
     await new Promise((r) => setTimeout(r, 50));
     const after = [...shadow().querySelectorAll<HTMLElement>(".wm-gb-site")];
-    expect(after[1].querySelector(".wm-gb-site-head")!.getAttribute("aria-expanded")).toBe("false");
+    expect(after[1].querySelector(".wm-gb-site-toggle")!.getAttribute("aria-expanded")).toBe("false");
     expect(after[1].querySelectorAll(".wm-gb-page")).toHaveLength(0);
     expect(after[0].querySelectorAll(".wm-gb-page")).toHaveLength(1);
+  });
+
+  it("exports every note of one site, not just the search hits", async () => {
+    const { storage, a } = await seed();
+    const second = makePage("pg_docs2", "https://docs.example.com/tokens", "Token reference");
+    await storage.save(makeNote("d3", second.id, second.url, "expiry is wrong", { updatedAt: 400 }), second);
+    a.use(createGlobalBrowserPlugin());
+    a.commands.execute("browser.open");
+    await new Promise((r) => setTimeout(r, 50));
+
+    // jsdom Blobs cannot be read back, so record what the download was handed.
+    const payloads: string[] = [];
+    const OriginalBlob = globalThis.Blob;
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    const originalClick = HTMLAnchorElement.prototype.click;
+    const names: string[] = [];
+    globalThis.Blob = class extends OriginalBlob {
+      constructor(parts: BlobPart[], options?: BlobPropertyBag) {
+        payloads.push(String(parts[0]));
+        super(parts, options);
+      }
+    } as typeof Blob;
+    URL.createObjectURL = () => "blob:test";
+    URL.revokeObjectURL = () => {};
+    HTMLAnchorElement.prototype.click = function () {
+      names.push(this.download);
+    };
+    try {
+      // A query that matches one note on the host: the export must ignore it.
+      const input = shadow().querySelector<HTMLInputElement>(".wm-gb input")!;
+      input.value = "diagram";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 300));
+      expect(shadow().querySelectorAll(".wm-gb-note")).toHaveLength(1);
+
+      shadow()
+        .querySelector<HTMLElement>(".wm-gb-controls [role=switch]")!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 50));
+
+      const section = [...shadow().querySelectorAll<HTMLElement>(".wm-gb-site")].find(
+        (s) => s.dataset.host === "docs.example.com"
+      )!;
+      const button = section.querySelector<HTMLElement>(".wm-gb-site-export")!;
+      expect(button.textContent).toBe("Export site");
+      expect(button.getAttribute("aria-label")).toBe("Export every annotation on docs.example.com");
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+
+      expect(names).toEqual(["webmods-annotations-docs.example.com.json"]);
+      const doc = JSON.parse(payloads[0]);
+      expect(doc.format).toBe("wm-annotate-export");
+      expect(doc.pages.map((p: { identity: PageIdentity }) => p.identity.id).sort()).toEqual(["pg_docs", "pg_docs2"]);
+      expect(doc.pages.flatMap((p: { annotations: Annotation[] }) => p.annotations.map((n) => n.id)).sort()).toEqual([
+        "d1",
+        "d2",
+        "d3",
+      ]);
+    } finally {
+      globalThis.Blob = OriginalBlob;
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+      HTMLAnchorElement.prototype.click = originalClick;
+    }
   });
 
   it("keeps the grouping choice across a tab remount", async () => {
