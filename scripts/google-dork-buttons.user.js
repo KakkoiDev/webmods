@@ -2,7 +2,7 @@
 // @name         Google Dork Buttons
 // @namespace    http://tampermonkey.net/
 // @icon         https://www.google.com/favicon.ico
-// @version      2026.09.18.1
+// @version      2026.09.18.2
 // @description  Adds one-click Google dork operator buttons under the Google search bar
 // @author       Cyril
 // @match        https://www.google.com/*
@@ -17,9 +17,9 @@
     // Google dork operators, one click to insert into the search box (cursor
     // placed right after, or between quotes/parens for the ones that need a
     // value). On the homepage they appear as a dropdown next to the "I'm
-    // Feeling Lucky" button; on the results page as a row of buttons under the
-    // search bar. Anchors on the search box's name="q" (stable) and never on
-    // hashed classes.
+    // Feeling Lucky" button; on the results page as a dropdown at the end of the
+    // toolbar under the search bar (after the "Tools" button). Anchors on stable
+    // ids/names (#gbqfbb, #hdtb-tls, name="q") - never on hashed classes.
     const DORKS = [
         { label: 'site:',       insert: 'site:' },
         { label: 'intitle:',    insert: 'intitle:' },
@@ -48,29 +48,6 @@
         return document.querySelector('textarea[name="q"], input[name="q"]');
     }
 
-    // The rounded search pill is ~50px tall with a ~26px radius. Walk up from
-    // the textarea to the first such ancestor so we never depend on the hashed
-    // class name Google regenerates.
-    function pillByGeometry(box) {
-        let el = box.parentElement;
-        while (el && el !== document.body && el !== document.documentElement) {
-            const cs = getComputedStyle(el);
-            const radius = parseFloat(cs.borderTopLeftRadius) || 0;
-            if (el.offsetHeight >= 44 && radius >= 20) return el;
-            el = el.parentElement;
-        }
-        return null;
-    }
-
-    function findAnchor(box) {
-        return (
-            box.closest('[jsname="RNNXgb"]') ||
-            pillByGeometry(box) ||
-            box.closest('form') ||
-            box.parentElement
-        );
-    }
-
     // Set the value through the native prototype setter so Google's own input
     // controller (jsaction="input:...") sees the change, then fire an `input`.
     function setBoxValue(box, value) {
@@ -84,65 +61,21 @@
 
     function insertDork(box, dork) {
         const insert = dork.insert;
-        const value = (box.value || '') + insert;
+        const base = box.value || '';
+        const sep = base ? ' ' : ''; // space-separate from an existing query
+        const value = base + sep + insert;
         setBoxValue(box, value);
         box.dispatchEvent(new Event('input', { bubbles: true }));
         box.focus();
-        const caret = value.length - insert.length + (dork.caret != null ? dork.caret : insert.length);
+        const caret = base.length + sep.length + (dork.caret != null ? dork.caret : insert.length);
         try { box.setSelectionRange(caret, caret); } catch (e) { /* not a text input */ }
     }
 
-    function buildBar() {
-        const bar = document.createElement('div');
-        bar.id = 'wmd-dork-bar';
-        bar.style.cssText = [
-            'display:flex', 'flex-wrap:wrap', 'gap:6px', 'align-items:center',
-            'max-width:688px', 'margin:10px auto 0', 'padding:0 4px',
-            'font-family:Arial,sans-serif',
-        ].join(';');
-
-        const label = document.createElement('span');
-        label.textContent = 'Dorks:';
-        label.style.cssText = 'color:#9aa0a6;font-size:13px;margin-right:2px;';
-        bar.appendChild(label);
-
-        for (const dork of DORKS) {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.textContent = dork.label;
-            btn.title = dork.insert;
-            btn.style.cssText = [
-                'background:#303134', 'color:#e8eaed',
-                'border:1px solid #5f6368', 'border-radius:9999px',
-                'padding:4px 12px', 'font-size:13px', 'line-height:20px',
-                'cursor:pointer', 'white-space:nowrap',
-            ].join(';');
-            btn.addEventListener('mouseenter', () => { btn.style.background = '#3c4043'; });
-            btn.addEventListener('mouseleave', () => { btn.style.background = '#303134'; });
-            btn.addEventListener('click', () => {
-                const box = findBox();
-                if (box) insertDork(box, dork);
-            });
-            bar.appendChild(btn);
-        }
-        return bar;
-    }
-
-    function findLuckyButton() {
-        return document.querySelector('#gbqfbb') || document.querySelector('input[name="btnI"]');
-    }
-
-    // Homepage: a single dropdown next to the "I'm Feeling Lucky" button.
-    function buildSelect() {
+    function makeDorkSelect(id, css) {
         const sel = document.createElement('select');
-        sel.id = 'wmd-dork-select';
-        sel.style.cssText = [
-            'background:#303134', 'color:#e8eaed',
-            'border:1px solid #303134', 'border-radius:8px',
-            'height:36px', 'margin:11px 4px', 'padding:0 16px',
-            'font-family:Arial,sans-serif', 'font-size:14px',
-            'cursor:pointer', 'vertical-align:middle',
-        ].join(';');
+        sel.id = id;
+        sel.title = 'Google dork operators';
+        sel.style.cssText = css;
 
         const placeholder = document.createElement('option');
         placeholder.value = '';
@@ -167,7 +100,45 @@
         return sel;
     }
 
-    let el = null; // the injected element (select on the homepage, button bar on results)
+    function buildHomeSelect() {
+        return makeDorkSelect('wmd-dork-select', [
+            'background:#303134', 'color:#e8eaed',
+            'border:1px solid #303134', 'border-radius:8px',
+            'height:36px', 'margin:11px 4px', 'padding:0 16px',
+            'font-family:Arial,sans-serif', 'font-size:14px',
+            'cursor:pointer', 'vertical-align:middle',
+        ].join(';'));
+    }
+
+    function buildToolbarSelect() {
+        // Look like Google's "Tools" button: gray label + chevron-down, no fill,
+        // subtle hover pill. Native select styled with appearance:none so the
+        // closed control matches the toolbar while the OS still renders the menu.
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z" fill="#9aa0a6"/></svg>';
+        const chevron = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+        const sel = makeDorkSelect('wmd-dork-select-toolbar', [
+            'appearance:none', '-webkit-appearance:none', '-moz-appearance:none',
+            'background-color:transparent',
+            `background-image:url("${chevron}")`,
+            'background-repeat:no-repeat',
+            'background-position:right 4px center',
+            'background-size:16px 16px',
+            'color:#9aa0a6', 'border:none', 'border-radius:8px',
+            'height:32px', 'margin:0 4px', 'padding:0 24px 0 8px',
+            'font-family:Arial,sans-serif', 'font-size:14px',
+            'cursor:pointer', 'align-self:center', 'white-space:nowrap',
+            'outline:none',
+        ].join(';'));
+        sel.addEventListener('mouseenter', () => { sel.style.backgroundColor = '#3c4043'; });
+        sel.addEventListener('mouseleave', () => { sel.style.backgroundColor = 'transparent'; });
+        return sel;
+    }
+
+    function findLuckyButton() {
+        return document.querySelector('#gbqfbb') || document.querySelector('input[name="btnI"]');
+    }
+
+    let el = null; // the injected select (homepage or results toolbar)
 
     function inject() {
         const box = findBox();
@@ -176,17 +147,19 @@
         const lucky = findLuckyButton();
         if (lucky) {
             // Homepage: dropdown next to "I'm Feeling Lucky".
-            if (!el || el.id !== 'wmd-dork-select') el = buildSelect();
+            if (!el || el.id !== 'wmd-dork-select') el = buildHomeSelect();
             if (el.isConnected && el.previousElementSibling === lucky) return;
             if (el.parentElement) el.remove();
             lucky.insertAdjacentElement('afterend', el);
             return;
         }
 
-        // Results page: row of dork buttons under the search bar.
-        const target = findAnchor(box);
+        // Results page: dropdown at the end of the toolbar, after the "Tools"
+        // button (#hdtb-tls). Fall back to right under the search bar.
+        const tools = document.getElementById('hdtb-tls');
+        const target = (tools && tools.parentElement) || box.closest('form') || box.parentElement;
         if (!target) return;
-        if (!el || el.id !== 'wmd-dork-bar') el = buildBar();
+        if (!el || el.id !== 'wmd-dork-select-toolbar') el = buildToolbarSelect();
         if (el.isConnected && el.previousElementSibling === target) return;
         if (el.parentElement) el.remove();
         target.insertAdjacentElement('afterend', el);
@@ -201,8 +174,8 @@
 
     function start() {
         inject();
-        // Google re-renders the search box on some in-place navigations; re-anchor
-        // the bar whenever the DOM under it changes.
+        // Google re-renders the toolbar/search box on some in-place navigations;
+        // re-anchor the select whenever the DOM under it changes.
         const observer = new MutationObserver(scheduleInject);
         observer.observe(document.body || document.documentElement, {
             childList: true,
