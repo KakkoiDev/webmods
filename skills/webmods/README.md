@@ -1,4 +1,4 @@
-# create-userscript
+# webmods
 
 A Claude skill that scaffolds a new [Tampermonkey](https://www.tampermonkey.net/) userscript and its dev loader, then guides building the feature.
 
@@ -7,7 +7,7 @@ A Claude skill that scaffolds a new [Tampermonkey](https://www.tampermonkey.net/
 From the root of a userscript repo:
 
 ```
-node skills/create-userscript/scripts/new-userscript.mjs \
+node skills/webmods/scripts/new-userscript.mjs \
   --name "Slack Quick Edit" \
   --match "https://app.slack.com/*" \
   --desc "Double-click your own Slack message to edit it"
@@ -19,6 +19,6 @@ Needs **Node 18+** (uses global `fetch`). See [SKILL.md](SKILL.md) for the full 
 
 ## Share it
 
-Self-contained. Copy the `skills/create-userscript/` directory into any userscript repo. The `greasyfork.json`/README steps auto-detect and skip when those files are absent, so the core scaffold works anywhere.
+Self-contained. Copy the `skills/webmods/` directory into any userscript repo. The `greasyfork.json`/README steps auto-detect and skip when those files are absent, so the core scaffold works anywhere.
 
 MIT. See [LICENSE.txt](LICENSE.txt).

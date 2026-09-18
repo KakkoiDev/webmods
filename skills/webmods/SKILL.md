@@ -1,5 +1,5 @@
 ---
-name: create-userscript
+name: webmods
 description: Scaffold a new Tampermonkey userscript and its dev loader, then build the feature. Generates scripts/<slug>.user.js with a filled metadata header, verifies the target-site favicon, registers it in greasyfork.json + the README table when those exist, and prints the dev-loader block to paste into Tampermonkey for live reload. Use when creating a new userscript / greasemonkey script, adding a feature to a website via Tampermonkey, or starting a *.user.js from scratch. Triggers - "new userscript", "create a tampermonkey script", "scaffold a userscript", "add a feature to <site> with tampermonkey".
 license: MIT. See LICENSE.txt
 metadata:
@@ -7,14 +7,14 @@ metadata:
   version: "1.0"
 ---
 
-# create-userscript
+# webmods
 
 Scaffold a new Tampermonkey userscript, then build the feature into it. Run the scaffolder from the **root of a userscript repo** (a repo of `scripts/*.user.js` files). Needs **Node 18+** (uses global `fetch`).
 
 ## 1. Scaffold the file
 
 ```
-node skills/create-userscript/scripts/new-userscript.mjs \
+node skills/webmods/scripts/new-userscript.mjs \
   --name "Slack Quick Edit" \
   --match "https://app.slack.com/*" \
   --desc "Double-click your own Slack message to edit it"
@@ -57,4 +57,4 @@ A userscript can also ship as a Chrome extension - one-click install, no Tamperm
 
 ## Portability
 
-Self-contained: the scaffolder and this SKILL.md carry everything needed. The `greasyfork.json`/README integration is auto-detected - present in the origin repo, skipped elsewhere. Copy the `skills/create-userscript/` directory into any userscript repo to use it there.
+Self-contained: the scaffolder and this SKILL.md carry everything needed. The `greasyfork.json`/README integration is auto-detected - present in the origin repo, skipped elsewhere. Copy the `skills/webmods/` directory into any userscript repo to use it there.

@@ -3,7 +3,7 @@
 // greasyfork.json + the README table when those exist, and print the dev-loader
 // block. Run from the repo root:
 //
-//   node skills/create-userscript/scripts/new-userscript.mjs \
+//   node skills/webmods/scripts/new-userscript.mjs \
 //     --name "Slack Quick Edit" \
 //     --match "https://app.slack.com/*" \
 //     --desc "Double-click your own Slack message to edit it"
@@ -98,7 +98,7 @@ const args = parseArgs(process.argv.slice(2));
 if (args.help || !args.name || !args.desc || !args.match || args.match.length === 0) {
   console.log(
     [
-      'Usage: node skills/create-userscript/scripts/new-userscript.mjs \\',
+      'Usage: node skills/webmods/scripts/new-userscript.mjs \\',
       '  --name "Script Name" --match "https://host/*" --desc "one line"',
       '',
       'Required: --name --match --desc',
