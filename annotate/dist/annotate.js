@@ -23,10 +23,12 @@ var WebmodsAnnotate = (() => {
   var index_exports = {};
   __export(index_exports, {
     ARCHIVED_KEY: () => ARCHIVED_KEY,
+    DEFAULT_RELOAD_PORT: () => DEFAULT_RELOAD_PORT,
     DEFAULT_ROOT: () => DEFAULT_ROOT,
     DocumentStorage: () => DocumentStorage,
     FIRSTMATE_CONFIG_FILENAME: () => FIRSTMATE_CONFIG_FILENAME,
     FIRSTMATE_FORMAT: () => FIRSTMATE_FORMAT,
+    FIRSTMATE_PORT_SETTING: () => FIRSTMATE_PORT_SETTING,
     FIRSTMATE_ROOT_SETTING: () => FIRSTMATE_ROOT_SETTING,
     FIRSTMATE_SCHEMA_VERSION: () => FIRSTMATE_SCHEMA_VERSION,
     FIRSTMATE_SENT_SETTING: () => FIRSTMATE_SENT_SETTING,
@@ -91,9 +93,11 @@ var WebmodsAnnotate = (() => {
     normalizeUrl: () => normalizeUrl,
     noteLink: () => noteLink,
     parseGistId: () => parseGistId,
+    parsePort: () => parsePort,
     parseRoot: () => parseRoot,
     parseSSE: () => parseSSE,
     rangeOffsets: () => rangeOffsets,
+    reloadEventsURL: () => reloadEventsURL,
     renderMarkdown: () => renderMarkdown,
     resolveAnchor: () => resolveAnchor,
     resolveRangeInBlock: () => resolveRangeInBlock,
@@ -3314,7 +3318,19 @@ ${result.url}
   // src/plugins/firstmate.ts
   var FIRSTMATE_SENT_SETTING = "firstmate.sent";
   var FIRSTMATE_ROOT_SETTING = "firstmate.root";
+  var FIRSTMATE_PORT_SETTING = "firstmate.reloadPort";
+  var DEFAULT_RELOAD_PORT = 4817;
   var FIRSTMATE_CONFIG_FILENAME = "firstmate-annotate.config.json";
+  function parsePort(input) {
+    const text = String(input ?? "").trim();
+    if (!text) return DEFAULT_RELOAD_PORT;
+    const port = Number(text);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`port must be 1024-65535: ${text}`);
+    return port;
+  }
+  function reloadEventsURL(port, localPath) {
+    return `http://127.0.0.1:${port}/events?path=${encodeURIComponent(localPath)}`;
+  }
   var FIRSTMATE_FORMAT = "wm-annotate-firstmate";
   var FIRSTMATE_SCHEMA_VERSION = 1;
   function localPathOf(url) {
@@ -3378,6 +3394,22 @@ ${result.url}
       const stored = await requireCtx().storage.getSetting?.(FIRSTMATE_ROOT_SETTING);
       return parseRoot(typeof stored === "string" ? stored : null);
     }
+    async function getPort() {
+      const stored = await requireCtx().storage.getSetting?.(FIRSTMATE_PORT_SETTING);
+      return parsePort(typeof stored === "number" ? stored : null);
+    }
+    const liveReload = options.liveReload === false ? null : options.liveReload ?? (typeof EventSource === "function" ? {
+      connect: (url) => new EventSource(url),
+      reload: () => globalThis.location.reload()
+    } : null);
+    async function startLiveReload() {
+      if (!liveReload) return;
+      const localPath = localPathOf(requireCtx().getPage().url);
+      if (!localPath || !colocatedFolder(localPath, await getRoot())) return;
+      const source = liveReload.connect(reloadEventsURL(await getPort(), localPath));
+      source.addEventListener("reload", () => liveReload.reload());
+      cleanups.push(() => source.close());
+    }
     async function send() {
       const c = requireCtx();
       const page = c.getPage();
@@ -3385,12 +3417,13 @@ ${result.url}
       const pending = unsentNotes(await c.storage.getPage(page), sent);
       if (!pending.length) return { sent: 0, path: null };
       const root = await getRoot();
+      const reloadPort = await getPort();
       const folder = folderFor(page.url, root, localPathOf(page.url));
       const at = now();
       const path = `${folder}/${firstmateFilename(at)}`;
       await options.save(
         FIRSTMATE_CONFIG_FILENAME,
-        JSON.stringify({ format: "wm-annotate-firstmate-config", root: root.join("/") }, null, 2) + "\n",
+        JSON.stringify({ format: "wm-annotate-firstmate-config", root: root.join("/"), reloadPort }, null, 2) + "\n",
         { overwrite: true }
       );
       await options.save(path, JSON.stringify(buildFirstmatePayload(page, pending, at, folder), null, 2), {
@@ -3415,6 +3448,19 @@ ${result.url}
         notify(`Folder not saved: ${err instanceof Error ? err.message : err}`);
       }
     }
+    async function configurePort() {
+      const c = requireCtx();
+      const entered = ask(
+        `Live-reload port the watcher serves on 127.0.0.1 (1024-65535). Blank resets to ${DEFAULT_RELOAD_PORT}. Restart the watcher after a send so it reads the new port.`,
+        String(await getPort())
+      );
+      if (entered === null) return;
+      try {
+        await c.storage.setSetting?.(FIRSTMATE_PORT_SETTING, parsePort(entered));
+      } catch (err) {
+        notify(`Port not saved: ${err instanceof Error ? err.message : err}`);
+      }
+    }
     const run = () => {
       void send().then(
         (result) => notify(
@@ -3428,6 +3474,7 @@ ${result.url}
         ctx = pluginCtx;
         cleanups.push(pluginCtx.commands.register("firstmate.send", () => run()));
         cleanups.push(pluginCtx.commands.register("firstmate.configure-root", () => configureRoot()));
+        cleanups.push(pluginCtx.commands.register("firstmate.configure-port", () => configurePort()));
         cleanups.push(
           pluginCtx.addHeaderAction({
             id: "firstmate",
@@ -3437,12 +3484,14 @@ ${result.url}
               const entries = [
                 { label: "Send to firstmate", onClick: run },
                 { group: "Settings" },
-                { label: "Folder\u2026", onClick: () => void configureRoot() }
+                { label: "Folder\u2026", onClick: () => void configureRoot() },
+                { label: "Reload port\u2026", onClick: () => void configurePort() }
               ];
               return entries;
             }
           })
         );
+        void startLiveReload().catch((err) => console.warn("[webmods-annotate] live reload not started", err));
       },
       destroy() {
         for (const off of cleanups.splice(0)) off();

@@ -25,6 +25,10 @@ export {
   FIRSTMATE_SENT_SETTING,
   FIRSTMATE_ROOT_SETTING,
   FIRSTMATE_CONFIG_FILENAME,
+  FIRSTMATE_PORT_SETTING,
+  DEFAULT_RELOAD_PORT,
+  parsePort,
+  reloadEventsURL,
 } from "./plugins/firstmate";
 export {
   folderFor,
@@ -38,7 +42,7 @@ export {
   SLUG_MAX,
   FOLDER_MAX,
 } from "./url-folder";
-export type { FirstmatePlugin, FirstmatePluginOptions, FirstmatePayload, FirstmateNote, FirstmateSendResult } from "./plugins/firstmate";
+export type { ReloadSource, FirstmatePlugin, FirstmatePluginOptions, FirstmatePayload, FirstmateNote, FirstmateSendResult } from "./plugins/firstmate";
 export { collectPages, filterPagesByScope, exportFilename } from "./plugins/portable-data";
 export type { PageGroup, ExportScope, ExportOptions } from "./plugins/portable-data";
 export { download, copyText } from "./dom-utils";

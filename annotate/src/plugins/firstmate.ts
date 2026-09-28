@@ -1,13 +1,35 @@
 import { isArchived } from "../archive";
 import type { Annotation, AnnotatorPlugin, HeaderActionItem, PageIdentity, PluginContext } from "../types";
-import { DEFAULT_ROOT, folderFor, parseRoot } from "../url-folder";
+import { DEFAULT_ROOT, colocatedFolder, folderFor, parseRoot } from "../url-folder";
 
 /** Setting holding `{ [noteId]: updatedAt }` for every note version already sent. */
 export const FIRSTMATE_SENT_SETTING = "firstmate.sent";
 /** Setting holding the root folder, relative to the browser's Downloads folder. */
 export const FIRSTMATE_ROOT_SETTING = "firstmate.root";
-/** Written at the top of the Downloads folder on every send; the watcher reads the root from it. */
+/** Setting holding the live-reload port the watcher serves on 127.0.0.1. */
+export const FIRSTMATE_PORT_SETTING = "firstmate.reloadPort";
+export const DEFAULT_RELOAD_PORT = 4817;
+/** Written at the top of the Downloads folder on every send; the watcher reads root and port from it. */
 export const FIRSTMATE_CONFIG_FILENAME = "firstmate-annotate.config.json";
+
+export function parsePort(input: string | number | null | undefined): number {
+  const text = String(input ?? "").trim();
+  if (!text) return DEFAULT_RELOAD_PORT;
+  const port = Number(text);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`port must be 1024-65535: ${text}`);
+  return port;
+}
+
+/** SSE URL a local doc subscribes to for live reload. */
+export function reloadEventsURL(port: number, localPath: string): string {
+  return `http://127.0.0.1:${port}/events?path=${encodeURIComponent(localPath)}`;
+}
+
+/** The part of EventSource live reload uses; injectable for tests. */
+export interface ReloadSource {
+  addEventListener(type: "reload", listener: () => void): void;
+  close(): void;
+}
 
 export const FIRSTMATE_FORMAT = "wm-annotate-firstmate";
 export const FIRSTMATE_SCHEMA_VERSION = 1;
@@ -124,6 +146,16 @@ export interface FirstmatePluginOptions {
   /** Defaults to window.prompt. */
   prompt?(message: string, initial?: string): string | null;
   now?(): number;
+  /**
+   * Live reload for file:// docs under the root. Defaults to EventSource and
+   * location.reload; `false` disables it.
+   */
+  liveReload?:
+    | false
+    | {
+        connect(url: string): ReloadSource;
+        reload(): void;
+      };
 }
 
 export interface FirstmatePlugin extends AnnotatorPlugin {
@@ -148,6 +180,32 @@ export function createFirstmatePlugin(options: FirstmatePluginOptions): Firstmat
     return parseRoot(typeof stored === "string" ? stored : null);
   }
 
+  async function getPort(): Promise<number> {
+    const stored = await requireCtx().storage.getSetting?.<number>(FIRSTMATE_PORT_SETTING);
+    return parsePort(typeof stored === "number" ? stored : null);
+  }
+
+  const liveReload =
+    options.liveReload === false
+      ? null
+      : (options.liveReload ??
+        (typeof EventSource === "function"
+          ? {
+              connect: (url: string): ReloadSource => new EventSource(url) as unknown as ReloadSource,
+              reload: () => globalThis.location.reload(),
+            }
+          : null));
+
+  /** Subscribe a file:// doc stored under the root; EventSource retries on its own if the server is down. */
+  async function startLiveReload(): Promise<void> {
+    if (!liveReload) return;
+    const localPath = localPathOf(requireCtx().getPage().url);
+    if (!localPath || !colocatedFolder(localPath, await getRoot())) return;
+    const source = liveReload.connect(reloadEventsURL(await getPort(), localPath));
+    source.addEventListener("reload", () => liveReload.reload());
+    cleanups.push(() => source.close());
+  }
+
   async function send(): Promise<FirstmateSendResult> {
     const c = requireCtx();
     const page = c.getPage();
@@ -156,12 +214,13 @@ export function createFirstmatePlugin(options: FirstmatePluginOptions): Firstmat
     if (!pending.length) return { sent: 0, path: null };
 
     const root = await getRoot();
+    const reloadPort = await getPort();
     const folder = folderFor(page.url, root, localPathOf(page.url));
     const at = now();
     const path = `${folder}/${firstmateFilename(at)}`;
     await options.save(
       FIRSTMATE_CONFIG_FILENAME,
-      JSON.stringify({ format: "wm-annotate-firstmate-config", root: root.join("/") }, null, 2) + "\n",
+      JSON.stringify({ format: "wm-annotate-firstmate-config", root: root.join("/"), reloadPort }, null, 2) + "\n",
       { overwrite: true }
     );
     await options.save(path, JSON.stringify(buildFirstmatePayload(page, pending, at, folder), null, 2), {
@@ -189,6 +248,21 @@ export function createFirstmatePlugin(options: FirstmatePluginOptions): Firstmat
     }
   }
 
+  async function configurePort(): Promise<void> {
+    const c = requireCtx();
+    const entered = ask(
+      `Live-reload port the watcher serves on 127.0.0.1 (1024-65535). Blank resets to ${DEFAULT_RELOAD_PORT}. ` +
+        "Restart the watcher after a send so it reads the new port.",
+      String(await getPort())
+    );
+    if (entered === null) return;
+    try {
+      await c.storage.setSetting?.(FIRSTMATE_PORT_SETTING, parsePort(entered));
+    } catch (err) {
+      notify(`Port not saved: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
   const run = (): void => {
     void send()
       .then((result) =>
@@ -208,6 +282,7 @@ export function createFirstmatePlugin(options: FirstmatePluginOptions): Firstmat
       ctx = pluginCtx;
       cleanups.push(pluginCtx.commands.register("firstmate.send", () => run()));
       cleanups.push(pluginCtx.commands.register("firstmate.configure-root", () => configureRoot()));
+      cleanups.push(pluginCtx.commands.register("firstmate.configure-port", () => configurePort()));
       cleanups.push(
         pluginCtx.addHeaderAction({
           id: "firstmate",
@@ -218,11 +293,13 @@ export function createFirstmatePlugin(options: FirstmatePluginOptions): Firstmat
               { label: "Send to firstmate", onClick: run },
               { group: "Settings" },
               { label: "Folder…", onClick: () => void configureRoot() },
+              { label: "Reload port…", onClick: () => void configurePort() },
             ];
             return entries;
           },
         })
       );
+      void startLiveReload().catch((err) => console.warn("[webmods-annotate] live reload not started", err));
     },
 
     destroy() {

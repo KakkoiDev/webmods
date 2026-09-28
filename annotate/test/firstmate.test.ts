@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   FIRSTMATE_CONFIG_FILENAME,
+  FIRSTMATE_PORT_SETTING,
   FIRSTMATE_ROOT_SETTING,
   FIRSTMATE_SENT_SETTING,
   buildFirstmatePayload,
   createFirstmatePlugin,
   firstmateFilename,
   localPathOf,
+  parsePort,
+  reloadEventsURL,
   unsentNotes,
 } from "../src/plugins/firstmate";
 import { ARCHIVED_KEY } from "../src/archive";
@@ -131,9 +134,9 @@ describe("firstmate plugin", () => {
 
   it("registers its commands and a Firstmate header dropdown", () => {
     const { registered, headerActions } = attach();
-    expect(registered).toEqual(["firstmate.send", "firstmate.configure-root"]);
+    expect(registered).toEqual(["firstmate.send", "firstmate.configure-root", "firstmate.configure-port"]);
     expect(headerActions.map((a) => a.id)).toEqual(["firstmate"]);
-    expect(headerActions[0].items?.().map((i) => i.label ?? i.group)).toEqual(["Send to firstmate", "Settings", "Folder…"]);
+    expect(headerActions[0].items?.().map((i) => i.label ?? i.group)).toEqual(["Send to firstmate", "Settings", "Folder…", "Reload port…"]);
   });
 
   it("saves only the current page's unsent notes into the per-URL folder, then marks them sent", async () => {
@@ -147,7 +150,7 @@ describe("firstmate plugin", () => {
       [FIRSTMATE_CONFIG_FILENAME, true],
       [payloadPath, false],
     ]);
-    expect(JSON.parse(saved[0].text)).toEqual({ format: "wm-annotate-firstmate-config", root: "firstmate-annotate" });
+    expect(JSON.parse(saved[0].text)).toEqual({ format: "wm-annotate-firstmate-config", root: "firstmate-annotate", reloadPort: 4817 });
     const payload = JSON.parse(saved[1].text);
     expect(payload.folder).toBe("firstmate-annotate/example.com/a");
     expect(payload.notes.map((n: { id: string }) => n.id)).toEqual(["n1"]);
@@ -200,5 +203,79 @@ describe("firstmate plugin", () => {
       `Sent 1 note to firstmate: Downloads/${payloadPath}`,
       "No new or edited notes on this page to send to firstmate.",
     ]);
+  });
+});
+
+describe("live reload", () => {
+  async function setupFor(url: string, settings: Record<string, unknown> = {}) {
+    const storage = createMemoryStorage();
+    for (const [key, value] of Object.entries(settings)) await storage.setSetting?.(key, value);
+    const connected: string[] = [];
+    const listeners: Array<() => void> = [];
+    let closed = 0;
+    let reloads = 0;
+    const plugin = createFirstmatePlugin({
+      save: async () => {},
+      liveReload: {
+        connect: (u) => {
+          connected.push(u);
+          return { addEventListener: (_t, l) => void listeners.push(l), close: () => void closed++ };
+        },
+        reload: () => void reloads++,
+      },
+    });
+    const page: PageIdentity = { id: "p", url, normalizedUrl: url };
+    plugin.setup({
+      annotator: {} as any,
+      storage,
+      commands: { register: () => () => {} } as any,
+      on: () => () => {},
+      addSidebarTab: () => () => {},
+      addNoteAction: () => () => {},
+      addHeaderAction: () => () => {},
+      activateSidebarTab: () => {},
+      getPage: () => page,
+      getNotes: () => [],
+      scrollToNote: async () => false,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    return {
+      plugin,
+      connected,
+      fire: () => listeners.forEach((l) => l()),
+      reloads: () => reloads,
+      closed: () => closed,
+    };
+  }
+
+  it("subscribes a file:// doc under the root and reloads on the reload event", async () => {
+    const lr = await setupFor("file:///Users/me/Downloads/firstmate-annotate/docs/plan/doc.html");
+    expect(lr.connected).toEqual([
+      "http://127.0.0.1:4817/events?path=%2FUsers%2Fme%2FDownloads%2Ffirstmate-annotate%2Fdocs%2Fplan%2Fdoc.html",
+    ]);
+    lr.fire();
+    expect(lr.reloads()).toBe(1);
+    lr.plugin.destroy?.();
+    expect(lr.closed()).toBe(1);
+  });
+
+  it("uses the configured port and root", async () => {
+    const lr = await setupFor("file:///d/team/notes/x/doc.html", {
+      [FIRSTMATE_PORT_SETTING]: 5000,
+      [FIRSTMATE_ROOT_SETTING]: "team/notes",
+    });
+    expect(lr.connected).toEqual([reloadEventsURL(5000, "/d/team/notes/x/doc.html")]);
+  });
+
+  it("does not subscribe web pages or local files outside the root", async () => {
+    expect((await setupFor("https://example.com/doc.html")).connected).toEqual([]);
+    expect((await setupFor("file:///Users/me/elsewhere/doc.html")).connected).toEqual([]);
+  });
+
+  it("validates the port", () => {
+    expect(parsePort("")).toBe(4817);
+    expect(parsePort("5000")).toBe(5000);
+    expect(() => parsePort("80")).toThrow("1024-65535");
+    expect(() => parsePort("abc")).toThrow("1024-65535");
   });
 });

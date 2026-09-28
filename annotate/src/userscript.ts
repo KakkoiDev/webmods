@@ -173,6 +173,7 @@ export function startUserscript(): void {
     GM_registerMenuCommand("Upload all sites to a secret gist", () => void annotator.commands.execute("gist.upload", "all"));
     GM_registerMenuCommand("Send to firstmate", () => annotator.commands.execute("firstmate.send"));
     GM_registerMenuCommand("Set firstmate folder…", () => annotator.commands.execute("firstmate.configure-root"));
+    GM_registerMenuCommand("Set firstmate reload port…", () => annotator.commands.execute("firstmate.configure-port"));
     GM_registerMenuCommand("Configure AI chat…", async () => {
       const currentKind = (await storage.getSetting<string>(CHAT_PROVIDER_SETTING)) ?? "anthropic";
       const kindInput = prompt(

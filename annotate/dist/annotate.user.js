@@ -2,7 +2,7 @@
 // @name         Webmods Annotate
 // @namespace    http://tampermonkey.net/
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM2MzY2ZjEiLz48dGV4dCB4PSIzMiIgeT0iNDIiIGZvbnQtc2l6ZT0iMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuKcj++4jzwvdGV4dD48L3N2Zz4=
-// @version      2026.09.28.3
+// @version      2026.09.28.4
 // @description  Annotate any web page with Markdown notes - robust anchors, cross-site Tampermonkey storage, notes sidebar, shareable note links, JSON export/import (Alt+Shift+A)
 // @author       KakkoiDev
 // @match        *://*/*
@@ -3607,7 +3607,19 @@ ${result.url}
   // src/plugins/firstmate.ts
   var FIRSTMATE_SENT_SETTING = "firstmate.sent";
   var FIRSTMATE_ROOT_SETTING = "firstmate.root";
+  var FIRSTMATE_PORT_SETTING = "firstmate.reloadPort";
+  var DEFAULT_RELOAD_PORT = 4817;
   var FIRSTMATE_CONFIG_FILENAME = "firstmate-annotate.config.json";
+  function parsePort(input) {
+    const text = String(input ?? "").trim();
+    if (!text) return DEFAULT_RELOAD_PORT;
+    const port = Number(text);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`port must be 1024-65535: ${text}`);
+    return port;
+  }
+  function reloadEventsURL(port, localPath) {
+    return `http://127.0.0.1:${port}/events?path=${encodeURIComponent(localPath)}`;
+  }
   var FIRSTMATE_FORMAT = "wm-annotate-firstmate";
   var FIRSTMATE_SCHEMA_VERSION = 1;
   function localPathOf(url) {
@@ -3671,6 +3683,22 @@ ${result.url}
       const stored = await requireCtx().storage.getSetting?.(FIRSTMATE_ROOT_SETTING);
       return parseRoot(typeof stored === "string" ? stored : null);
     }
+    async function getPort() {
+      const stored = await requireCtx().storage.getSetting?.(FIRSTMATE_PORT_SETTING);
+      return parsePort(typeof stored === "number" ? stored : null);
+    }
+    const liveReload = options.liveReload === false ? null : options.liveReload ?? (typeof EventSource === "function" ? {
+      connect: (url) => new EventSource(url),
+      reload: () => globalThis.location.reload()
+    } : null);
+    async function startLiveReload() {
+      if (!liveReload) return;
+      const localPath = localPathOf(requireCtx().getPage().url);
+      if (!localPath || !colocatedFolder(localPath, await getRoot())) return;
+      const source = liveReload.connect(reloadEventsURL(await getPort(), localPath));
+      source.addEventListener("reload", () => liveReload.reload());
+      cleanups.push(() => source.close());
+    }
     async function send() {
       const c = requireCtx();
       const page = c.getPage();
@@ -3678,12 +3706,13 @@ ${result.url}
       const pending = unsentNotes(await c.storage.getPage(page), sent);
       if (!pending.length) return { sent: 0, path: null };
       const root = await getRoot();
+      const reloadPort = await getPort();
       const folder = folderFor(page.url, root, localPathOf(page.url));
       const at = now();
       const path = `${folder}/${firstmateFilename(at)}`;
       await options.save(
         FIRSTMATE_CONFIG_FILENAME,
-        JSON.stringify({ format: "wm-annotate-firstmate-config", root: root.join("/") }, null, 2) + "\n",
+        JSON.stringify({ format: "wm-annotate-firstmate-config", root: root.join("/"), reloadPort }, null, 2) + "\n",
         { overwrite: true }
       );
       await options.save(path, JSON.stringify(buildFirstmatePayload(page, pending, at, folder), null, 2), {
@@ -3708,6 +3737,19 @@ ${result.url}
         notify(`Folder not saved: ${err instanceof Error ? err.message : err}`);
       }
     }
+    async function configurePort() {
+      const c = requireCtx();
+      const entered = ask(
+        `Live-reload port the watcher serves on 127.0.0.1 (1024-65535). Blank resets to ${DEFAULT_RELOAD_PORT}. Restart the watcher after a send so it reads the new port.`,
+        String(await getPort())
+      );
+      if (entered === null) return;
+      try {
+        await c.storage.setSetting?.(FIRSTMATE_PORT_SETTING, parsePort(entered));
+      } catch (err) {
+        notify(`Port not saved: ${err instanceof Error ? err.message : err}`);
+      }
+    }
     const run = () => {
       void send().then(
         (result) => notify(
@@ -3721,6 +3763,7 @@ ${result.url}
         ctx = pluginCtx;
         cleanups.push(pluginCtx.commands.register("firstmate.send", () => run()));
         cleanups.push(pluginCtx.commands.register("firstmate.configure-root", () => configureRoot()));
+        cleanups.push(pluginCtx.commands.register("firstmate.configure-port", () => configurePort()));
         cleanups.push(
           pluginCtx.addHeaderAction({
             id: "firstmate",
@@ -3730,12 +3773,14 @@ ${result.url}
               const entries = [
                 { label: "Send to firstmate", onClick: run },
                 { group: "Settings" },
-                { label: "Folder\u2026", onClick: () => void configureRoot() }
+                { label: "Folder\u2026", onClick: () => void configureRoot() },
+                { label: "Reload port\u2026", onClick: () => void configurePort() }
               ];
               return entries;
             }
           })
         );
+        void startLiveReload().catch((err) => console.warn("[webmods-annotate] live reload not started", err));
       },
       destroy() {
         for (const off of cleanups.splice(0)) off();
@@ -4029,6 +4074,7 @@ ${result.url}
       GM_registerMenuCommand("Upload all sites to a secret gist", () => void annotator.commands.execute("gist.upload", "all"));
       GM_registerMenuCommand("Send to firstmate", () => annotator.commands.execute("firstmate.send"));
       GM_registerMenuCommand("Set firstmate folder\u2026", () => annotator.commands.execute("firstmate.configure-root"));
+      GM_registerMenuCommand("Set firstmate reload port\u2026", () => annotator.commands.execute("firstmate.configure-port"));
       GM_registerMenuCommand("Configure AI chat\u2026", async () => {
         const currentKind = await storage.getSetting(CHAT_PROVIDER_SETTING) ?? "anthropic";
         const kindInput = prompt(

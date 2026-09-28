@@ -98,7 +98,7 @@ The root is set with **Set firstmate folder…** (menu) or **Firstmate > Folder�
 
 Each send writes two files:
 
-- `Downloads/firstmate-annotate.config.json`, overwritten, `{ "format": "wm-annotate-firstmate-config", "root": "<root>" }`. This is the shared config: the userscript owns the value, and the watcher reads it on every scan, so changing the folder in the browser moves the watcher too.
+- `Downloads/firstmate-annotate.config.json`, overwritten, `{ "format": "wm-annotate-firstmate-config", "root": "<root>", "reloadPort": 4817 }`. This is the shared config: the userscript owns the values. The watcher reads `root` on every scan, so changing the folder in the browser moves the watcher too. It reads `reloadPort` once, at startup.
 - The payload, in the per-URL folder below.
 
 The per-URL folder is `<root>/<host>/<path-slug>`:
@@ -120,13 +120,15 @@ A plain HTML page can live inside the root, for example `Downloads/firstmate-ann
 ### Watcher
 
 ```
-FM_ROOT=/path/to/firstmate node annotate/bin/firstmate-drop-watch.mjs [--downloads ~/Downloads] [--root <rel>] [--once] [--interval 2000]
+FM_ROOT=/path/to/firstmate node annotate/bin/firstmate-drop-watch.mjs [--downloads ~/Downloads] [--root <rel>] [--once] [--interval 2000] [--port 4817] [--no-reload]
 ```
 
 - `--downloads` / `FIRSTMATE_DOWNLOADS`: the browser's Downloads folder. Default `~/Downloads`.
 - `--root` / `FIRSTMATE_ROOT`: overrides the root. Without it, the root comes from `firstmate-annotate.config.json`, falling back to `firstmate-annotate`. The watcher applies the same validation as the userscript.
 - `--fm-root` / `FM_ROOT`: the firstmate checkout holding `bin/fm-inbox.sh`. Required.
 - `--once`: process the files present now and exit. Status 1 means a file failed. Status 2 means a setup error. Without `--once`, the tree is rescanned every `--interval` ms.
+- `--port` / `FIRSTMATE_RELOAD_PORT`: the live-reload port. Without it, the port is `reloadPort` from the config file, falling back to `4817`.
+- `--no-reload`: do not start the live-reload server. `--once` never starts it.
 
 The watcher scans `<downloads>/<root>` recursively, up to 8 levels deep, and skips `processed/` and `rejected/` folders. For each `firstmate-annotate-*.json` it runs `$FM_ROOT/bin/fm-inbox.sh note --request-id <sha256 of the file> -` with a Markdown rendering of the payload on stdin. The rendering names the page, the document path, and the per-URL folder.
 
@@ -135,6 +137,22 @@ The watcher scans `<downloads>/<root>` recursively, up to 8 levels deep, and ski
 - **Unparseable file:** it moves to `rejected/` in the same folder.
 - **Failed `fm-inbox.sh` call:** the file stays in place and is retried on the next scan.
 - **Environment:** `FM_HOME` passes through to `fm-inbox.sh`.
+
+### Live reload
+
+When the agent edits a local doc under the root, every open copy of that page reloads itself.
+
+- **Server:** the watcher starts it unless you pass `--once` or `--no-reload`. It is `bin/firstmate-reload-server.mjs`, a Server-Sent Events endpoint at `http://127.0.0.1:<port>/events?path=<absolute doc path>`. It binds to `127.0.0.1` only.
+- **Change detection:** the server watches `<downloads>/<root>` recursively with `fs.watch`. On a change to an `.html` or `.htm` file, it sends `event: reload` to every page subscribed to that file's path.
+- **Debounce:** writes to one file within 300 ms send one reload, so an editor's save-then-rename or a multi-step write reloads once.
+- **Page side:** the userscript subscribes on `file://` pages that live under the root (the same rule as [Local docs](#local-docs-lavish-style-pages)) and calls `location.reload()` on `reload`. Web pages and local files elsewhere never connect.
+- **Reconnect:** the stream starts with `retry: 1000`, and `EventSource` reconnects on its own. A page opened while the watcher is down, or open across a watcher restart, picks up again once the server is back. Nothing is replayed: a change made while the server was down does not reload the page.
+- **Who may listen:** only requests with `Origin: null` (a `file://` page) or no Origin (a local tool such as `curl`) are served. Any other origin gets 403, so a website open in the same browser cannot subscribe.
+- **Port:** default `4817`. Change it with **Set firstmate reload port…** (menu) or **Firstmate > Reload port…** (sidebar). The userscript connects on its setting at page load. The watcher reads it from the config file at startup, so send once and restart the watcher after changing it.
+
+Why SSE and not WebSocket: the push is one-way (server to page), `node:http` serves SSE with no dependency, and `EventSource` reconnects without any client code.
+
+Not verified in a browser: that Chrome lets a `file://` page (as a Tampermonkey userscript) open an `EventSource` to `127.0.0.1`, and that it sends `Origin: null`. Chrome's Local Network Access checks could also prompt for or block this. The server path is covered by tests. The browser path is not.
 
 ### JSON schema
 

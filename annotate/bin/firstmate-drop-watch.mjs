@@ -6,7 +6,11 @@
 // moves to a processed/ folder beside it. The request id is the file's sha256, so
 // re-running on the same file replays the original note instead of adding one.
 //
+// While watching (not --once) it also serves live reload for local docs under the
+// root: see firstmate-reload-server.mjs.
+//
 // Usage: firstmate-drop-watch.mjs [--downloads <dir>] [--root <rel>] [--fm-root <path>] [--once] [--interval <ms>]
+//                                 [--port <n>] [--no-reload]
 //   --downloads  browser download folder; env FIRSTMATE_DOWNLOADS; default ~/Downloads
 //   --root       send folder relative to --downloads; env FIRSTMATE_ROOT; default: the
 //                "root" in <downloads>/firstmate-annotate.config.json, which the
@@ -14,12 +18,16 @@
 //   --fm-root    firstmate checkout holding bin/fm-inbox.sh; env FM_ROOT; required
 //   --once       process what is there now and exit (exit 1 if any file failed)
 //   --interval   poll interval in ms, default 2000
+//   --port       live-reload port on 127.0.0.1; env FIRSTMATE_RELOAD_PORT; default: the
+//                "reloadPort" in the config file, else 4817. Read once at startup.
+//   --no-reload  do not start the live-reload server
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { DEFAULT_PORT, createReloadServer } from "./firstmate-reload-server.mjs";
 
 export const DROP_PATTERN = /^firstmate-annotate-.*\.json$/;
 export const FORMAT = "wm-annotate-firstmate";
@@ -38,13 +46,27 @@ export function checkRoot(root) {
   return segments.join("/");
 }
 
+function readConfig(downloads) {
+  const configPath = join(downloads, CONFIG_FILENAME);
+  return existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
+}
+
+export function checkPort(port) {
+  const n = Number(port);
+  if (!Number.isInteger(n) || n < 1024 || n > 65535) throw new Error(`invalid port "${port}": use 1024-65535`);
+  return n;
+}
+
 /** --root/env wins; else the config file the userscript writes; else the default. */
 export function resolveRoot(downloads, explicit) {
   if (explicit) return checkRoot(explicit);
-  const configPath = join(downloads, CONFIG_FILENAME);
-  if (!existsSync(configPath)) return DEFAULT_ROOT;
-  const config = JSON.parse(readFileSync(configPath, "utf8"));
-  return checkRoot(config?.root || DEFAULT_ROOT);
+  return checkRoot(readConfig(downloads)?.root || DEFAULT_ROOT);
+}
+
+/** --port/env wins; else the config file; else DEFAULT_PORT. */
+export function resolvePort(downloads, explicit) {
+  if (explicit) return checkPort(explicit);
+  return checkPort(readConfig(downloads)?.reloadPort ?? DEFAULT_PORT);
 }
 
 export function parsePayload(text) {
@@ -147,6 +169,8 @@ function parseArgs(argv) {
     downloads: process.env.FIRSTMATE_DOWNLOADS,
     root: process.env.FIRSTMATE_ROOT,
     fmRoot: process.env.FM_ROOT,
+    port: process.env.FIRSTMATE_RELOAD_PORT,
+    reload: true,
     once: false,
     interval: 2000,
   };
@@ -157,6 +181,8 @@ function parseArgs(argv) {
     else if (flag === "--root") args.root = argv[++i];
     else if (flag === "--fm-root") args.fmRoot = argv[++i];
     else if (flag === "--interval") args.interval = Number(argv[++i]);
+    else if (flag === "--port") args.port = argv[++i];
+    else if (flag === "--no-reload") args.reload = false;
     else throw new Error(`unknown argument: ${flag}`);
   }
   args.downloads ||= join(homedir(), "Downloads");
@@ -164,10 +190,11 @@ function parseArgs(argv) {
   if (!existsSync(join(args.fmRoot, "bin", "fm-inbox.sh"))) throw new Error(`no bin/fm-inbox.sh under ${args.fmRoot}`);
   if (!(args.interval > 0)) throw new Error("--interval must be a positive number of ms");
   if (args.root) checkRoot(args.root);
+  if (args.port) checkPort(args.port);
   return args;
 }
 
-function main() {
+async function main() {
   let args;
   try {
     args = parseArgs(process.argv.slice(2));
@@ -176,6 +203,17 @@ function main() {
     process.exit(2);
   }
   const options = { fmRoot: args.fmRoot };
+  let reload = null;
+  if (!args.once && args.reload) {
+    try {
+      reload = createReloadServer({ port: resolvePort(args.downloads, args.port) });
+      const port = await reload.listen();
+      console.error(`live reload on http://127.0.0.1:${port}/events`);
+    } catch (err) {
+      console.error(`firstmate-drop-watch: live reload not started: ${err.message}`);
+      process.exit(2);
+    }
+  }
   let watching = null;
   const scan = () => {
     let root;
@@ -188,6 +226,7 @@ function main() {
     const dir = join(args.downloads, root);
     if (dir !== watching) console.error(`watching ${dir} for firstmate-annotate-*.json`);
     watching = dir;
+    reload?.watchDir(dir);
     return scanOnce(dir, options);
   };
   if (args.once) process.exit(scan().includes("failed") ? 1 : 0);
@@ -195,4 +234,4 @@ function main() {
   setInterval(scan, args.interval);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) void main();
