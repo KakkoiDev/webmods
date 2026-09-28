@@ -289,9 +289,11 @@ describe("watcher CLI instant pickup", () => {
       await new Promise((r) => setTimeout(r, 300));
       const written = Date.now();
       writeFileSync(join(folder, "firstmate-annotate-20260928T070000.000Z.json"), JSON.stringify(payload));
-      await until(() => existsSync(join(fmRoot, "notes")) && readdirSync(join(fmRoot, "notes")).length === 1, 3000);
+      await until(() => existsSync(join(fmRoot, "notes")) && readdirSync(join(fmRoot, "notes")).length === 1, 5000);
       const elapsed = Date.now() - written;
-      expect(elapsed).toBeLessThan(1500);
+      // Far below the 60 s rescan, so only fs.watch can have delivered it. The real latency is logged;
+      // a tighter bound fails under a loaded full-suite run.
+      expect(elapsed).toBeLessThan(5000);
       await until(() => /ms after write\)/.test(stderr), 2000);
       console.log(`instant pickup: note delivered ${elapsed}ms after write; watcher log: ${stderr.match(/\d+ms after write/)?.[0]}`);
     } finally {

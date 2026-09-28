@@ -242,7 +242,9 @@ describe("watcher CLI status push", () => {
     const feed = JSON.parse((await held.done).body);
     const elapsed = Date.now() - written;
     expect(feed.statuses).toMatchObject([{ state: "received", inboxId: "42-abc", noteIds: ["n1"] }]);
-    expect(elapsed).toBeLessThan(1500);
+    // Far below the 60 s rescan, so only fs.watch can have delivered it. The real latency is logged;
+    // a tighter bound fails under a loaded full-suite run.
+    expect(elapsed).toBeLessThan(5000);
     console.log(`status push: page saw "received" ${elapsed}ms after the drop was written`);
   });
 });
