@@ -1,5 +1,5 @@
 import { UI_ATTR } from "./blocks";
-import { textSimilarity } from "./text-utils";
+import { isHiddenFromReader, textSimilarity } from "./text-utils";
 import type { Anchor } from "./types";
 
 const QUOTE_MAX = 300;
@@ -32,8 +32,10 @@ export function blockTextWithMap(block: Element): BlockTextMap {
   const walker = doc.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = (node as Text).parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
       // Our own overlay must never contribute to the host page's text.
-      if (parent?.closest(`[${UI_ATTR}]`)) return NodeFilter.FILTER_REJECT;
+      if (parent.closest(`[${UI_ATTR}]`)) return NodeFilter.FILTER_REJECT;
+      if (isHiddenFromReader(parent, block)) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
   });

@@ -144,6 +144,28 @@ function createDefaultBlockResolver() {
 function normalizeText(text) {
   return text.replace(/\s+/g, " ").trim();
 }
+var NEVER_RENDERED_TAGS = /* @__PURE__ */ new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
+var SVG_METADATA_TAGS = /* @__PURE__ */ new Set(["TITLE", "DESC", "METADATA"]);
+var SVG_NS = "http://www.w3.org/2000/svg";
+function isStyledInvisible(el) {
+  if (el.hasAttribute("hidden") || el.getAttribute("aria-hidden") === "true") return true;
+  const style = el.ownerDocument.defaultView?.getComputedStyle(el);
+  if (!style) return false;
+  if (style.display === "none" || style.visibility === "hidden") return true;
+  if (style.overflow === "hidden" && parseFloat(style.width) <= 1 && parseFloat(style.height) <= 1) return true;
+  return false;
+}
+function isHiddenFromReader(el, root) {
+  let cur = el;
+  while (cur) {
+    if (NEVER_RENDERED_TAGS.has(cur.tagName)) return true;
+    if (cur.namespaceURI === SVG_NS && SVG_METADATA_TAGS.has(cur.tagName)) return true;
+    if (isStyledInvisible(cur)) return true;
+    if (cur === root) break;
+    cur = cur.parentElement;
+  }
+  return false;
+}
 function textSimilarity(a, b) {
   if (a === b) return 1;
   if (a.length < 2 || b.length < 2) return 0;
@@ -172,7 +194,9 @@ function blockTextWithMap(block) {
   const walker = doc.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
     acceptNode(node2) {
       const parent = node2.parentElement;
-      if (parent?.closest(`[${UI_ATTR}]`)) return NodeFilter.FILTER_REJECT;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      if (parent.closest(`[${UI_ATTR}]`)) return NodeFilter.FILTER_REJECT;
+      if (isHiddenFromReader(parent, block)) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     }
   });
@@ -345,7 +369,7 @@ var QUOTE_MAX2 = 300;
 var CONTEXT_MAX = 60;
 var STABLE_ATTRS = ["id", "data-testid", "data-qa", "data-test", "name", "aria-label", "role", "href", "title"];
 function blockText(el) {
-  return normalizeText(el.textContent || "");
+  return blockTextWithMap(el).text;
 }
 function looksGenerated(value) {
   if (/^(css|sc|jsx)-/.test(value)) return true;

@@ -2,7 +2,7 @@
 // @name         Webmods Annotate
 // @namespace    http://tampermonkey.net/
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM2MzY2ZjEiLz48dGV4dCB4PSIzMiIgeT0iNDIiIGZvbnQtc2l6ZT0iMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuKcj++4jzwvdGV4dD48L3N2Zz4=
-// @version      2026.09.28.5
+// @version      2026.09.28.6
 // @description  Annotate any web page with Markdown notes - robust anchors, cross-site Tampermonkey storage, notes sidebar, shareable note links, JSON export/import (Alt+Shift+A)
 // @author       KakkoiDev
 // @match        *://*/*
@@ -163,8 +163,27 @@
   }
 
   // src/text-utils.ts
-  function normalizeText(text) {
-    return text.replace(/\s+/g, " ").trim();
+  var NEVER_RENDERED_TAGS = /* @__PURE__ */ new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
+  var SVG_METADATA_TAGS = /* @__PURE__ */ new Set(["TITLE", "DESC", "METADATA"]);
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  function isStyledInvisible(el) {
+    if (el.hasAttribute("hidden") || el.getAttribute("aria-hidden") === "true") return true;
+    const style = el.ownerDocument.defaultView?.getComputedStyle(el);
+    if (!style) return false;
+    if (style.display === "none" || style.visibility === "hidden") return true;
+    if (style.overflow === "hidden" && parseFloat(style.width) <= 1 && parseFloat(style.height) <= 1) return true;
+    return false;
+  }
+  function isHiddenFromReader(el, root) {
+    let cur = el;
+    while (cur) {
+      if (NEVER_RENDERED_TAGS.has(cur.tagName)) return true;
+      if (cur.namespaceURI === SVG_NS && SVG_METADATA_TAGS.has(cur.tagName)) return true;
+      if (isStyledInvisible(cur)) return true;
+      if (cur === root) break;
+      cur = cur.parentElement;
+    }
+    return false;
   }
   function textSimilarity(a, b) {
     if (a === b) return 1;
@@ -194,7 +213,9 @@
     const walker = doc.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
       acceptNode(node2) {
         const parent = node2.parentElement;
-        if (parent?.closest(`[${UI_ATTR}]`)) return NodeFilter.FILTER_REJECT;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+        if (parent.closest(`[${UI_ATTR}]`)) return NodeFilter.FILTER_REJECT;
+        if (isHiddenFromReader(parent, block)) return NodeFilter.FILTER_REJECT;
         return NodeFilter.FILTER_ACCEPT;
       }
     });
@@ -367,7 +388,7 @@
   var CONTEXT_MAX = 60;
   var STABLE_ATTRS = ["id", "data-testid", "data-qa", "data-test", "name", "aria-label", "role", "href", "title"];
   function blockText(el) {
-    return normalizeText(el.textContent || "");
+    return blockTextWithMap(el).text;
   }
   function looksGenerated(value) {
     if (/^(css|sc|jsx)-/.test(value)) return true;

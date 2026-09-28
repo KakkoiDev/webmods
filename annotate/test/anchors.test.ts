@@ -29,6 +29,27 @@ describe("createAnchor / resolveAnchor", () => {
     `);
   });
 
+  it("excludes style/script text and screen-reader-only duplicates from the quote", () => {
+    setBody(`
+      <main>
+        <h1 id="hero">
+          <span>
+            <svg viewBox="0 0 10 10">
+              <title>Headline text</title>
+              <style>.cls-1 { stroke: #39af33; }</style>
+              <path d="M0 0"></path>
+            </svg>
+            Headline text
+          </span>
+          <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0);">Headline text</span>
+          <span style="display: none;">Headline text (mobile, hidden)</span>
+        </h1>
+      </main>
+    `);
+    const anchor = createAnchor(document.getElementById("hero")!, "https://example.com/");
+    expect(anchor.textQuote?.exact).toBe("Headline text");
+  });
+
   it("creates an anchor with selector, quote, and fingerprint", () => {
     const el = document.getElementById("intro")!;
     const anchor = createAnchor(el, "https://example.com/doc");

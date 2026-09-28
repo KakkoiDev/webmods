@@ -1,5 +1,5 @@
-import { resolveRangeInBlock } from "./ranges";
-import { normalizeText, textSimilarity } from "./text-utils";
+import { blockTextWithMap, resolveRangeInBlock } from "./ranges";
+import { textSimilarity } from "./text-utils";
 import type { Anchor, AnchorResolution, Fingerprint } from "./types";
 
 export { normalizeText, textSimilarity } from "./text-utils";
@@ -8,8 +8,11 @@ const QUOTE_MAX = 300;
 const CONTEXT_MAX = 60;
 const STABLE_ATTRS = ["id", "data-testid", "data-qa", "data-test", "name", "aria-label", "role", "href", "title"];
 
+/** The block's reader-visible text, normalized. Shares its extraction with range anchors
+ * (blockTextWithMap) so a block's quote and a range's quote never disagree about what
+ * counts as visible. */
 function blockText(el: Element): string {
-  return normalizeText(el.textContent || "");
+  return blockTextWithMap(el).text;
 }
 
 function looksGenerated(value: string): boolean {
