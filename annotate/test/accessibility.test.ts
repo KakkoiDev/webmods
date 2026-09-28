@@ -144,6 +144,27 @@ describe("keyboard access", () => {
     expect(ids()).toEqual(["everywhere"]);
   });
 
+  it("puts tabs and close on the first header row, the mode switch and plugin buttons on the second", () => {
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    annotator.use({
+      name: "extra",
+      setup: (ctx) => {
+        ctx.addSidebarTab({ id: "extra", label: "All pages", render: () => {} });
+        ctx.addHeaderAction({ id: "export", label: "Export", items: () => [] });
+      },
+    });
+    annotator.openSidebar();
+    const rows = [...shadow().querySelectorAll<HTMLElement>(".wm-sidebar-header > .wm-header-row")];
+    expect(rows.map((r) => r.getAttribute("role"))).toEqual(["tablist", null]);
+    expect([...rows[0].querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual([
+      "Notes",
+      "All pages",
+      "Close sidebar",
+    ]);
+    expect(rows[1].querySelector(".wm-header-switch")).not.toBeNull();
+    expect([...rows[1].querySelectorAll<HTMLElement>(".wm-header-btn")].map((b) => b.textContent)).toEqual(["Export ▾"]);
+  });
+
   it("mirrors annotate mode on the sidebar header switch", () => {
     annotator = createAnnotator({ storage: createMemoryStorage() });
     annotator.openSidebar();

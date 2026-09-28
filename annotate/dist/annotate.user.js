@@ -2,7 +2,7 @@
 // @name         Webmods Annotate
 // @namespace    http://tampermonkey.net/
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM2MzY2ZjEiLz48dGV4dCB4PSIzMiIgeT0iNDIiIGZvbnQtc2l6ZT0iMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuKcj++4jzwvdGV4dD48L3N2Zz4=
-// @version      2026.09.28.6
+// @version      2026.09.28.7
 // @description  Annotate any web page with Markdown notes - robust anchors, cross-site Tampermonkey storage, notes sidebar, shareable note links, JSON export/import (Alt+Shift+A)
 // @author       KakkoiDev
 // @match        *://*/*
@@ -1068,8 +1068,10 @@ button.wm-btn.wm-danger { color: #d1242f; }
 .wm-sidebar.wm-left { left: 0; right: auto; border-left: 0; border-right: 1px solid #d0d7de; box-shadow: 4px 0 16px rgba(0,0,0,0.12); }
 .wm-sidebar.wm-right { right: 0; }
 .wm-sidebar.wm-open { display: flex; }
-.wm-sidebar-header { position: relative; display: flex; align-items: center; gap: 4px; padding: 10px 12px; border-bottom: 1px solid #d0d7de; }
-.wm-header-switch { display: flex; align-items: center; gap: 5px; }
+.wm-sidebar-header { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #d0d7de; }
+.wm-header-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.wm-header-tabs { overflow-x: auto; scrollbar-width: none; }
+.wm-header-switch { display: flex; align-items: center; gap: 5px; flex: none; white-space: nowrap; }
 .wm-header-switch > span { font-size: 11.5px; color: #57606a; }
 .wm-menu {
   position: absolute; top: 100%; right: 10px; z-index: 3; min-width: 236px;
@@ -1084,13 +1086,13 @@ button.wm-btn.wm-danger { color: #d1242f; }
 .wm-menu button:focus-visible { outline: 2px solid #6366f1; }
 .wm-menu-group { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #57606a; padding: 6px 8px 2px; }
 .wm-tab {
-  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; flex: none; white-space: nowrap;
   border: 0; background: none; padding: 4px 8px; border-radius: 6px; color: #57606a;
 }
 .wm-tab[aria-selected="true"] { color: #1f2328; background: #eef1f4; }
 .wm-tab:focus-visible { outline: 2px solid #6366f1; }
-.wm-header-actions { display: flex; gap: 4px; }
-button.wm-header-btn { font-size: 11px; padding: 3px 7px; }
+.wm-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-left: auto; }
+button.wm-header-btn { font-size: 11px; padding: 3px 7px; flex: none; white-space: nowrap; }
 .wm-sidebar-body { flex: 1; overflow: auto; padding: 10px 12px; }
 .wm-count { font-size: 12px; color: #57606a; margin-bottom: 8px; }
 .wm-note {
@@ -1212,7 +1214,6 @@ button.wm-corner-sidebar { width: 100%; }
       this.sidebar.setAttribute("aria-label", "Annotations");
       this.tabBar = doc.createElement("div");
       this.tabBar.className = "wm-sidebar-header";
-      this.tabBar.setAttribute("role", "tablist");
       this.sidebar.appendChild(this.tabBar);
       this.headerActionsEl = doc.createElement("span");
       this.headerActionsEl.className = "wm-header-actions";
@@ -1580,8 +1581,15 @@ button.wm-corner-sidebar { width: 100%; }
         if (this.isSidebarOpen()) this.renderTabs();
       };
     }
+    /** Header: tabs and close on the first row, the mode switch and plugin buttons on the second. */
     renderTabs() {
       this.tabBar.textContent = "";
+      const tabRow = this.doc.createElement("div");
+      tabRow.className = "wm-header-row wm-header-tabs";
+      tabRow.setAttribute("role", "tablist");
+      const toolRow = this.doc.createElement("div");
+      toolRow.className = "wm-header-row wm-header-tools";
+      this.tabBar.append(tabRow, toolRow);
       this.tabs.forEach((tab, index) => {
         const btn = this.doc.createElement("button");
         btn.className = "wm-tab";
@@ -1600,11 +1608,14 @@ button.wm-corner-sidebar { width: 100%; }
           this.activateTab(this.tabs[next].id);
           this.tabBar.querySelector(`.wm-tab[data-tab-id="${this.tabs[next].id}"]`)?.focus();
         });
-        this.tabBar.appendChild(btn);
+        tabRow.appendChild(btn);
       });
       const spacer = this.doc.createElement("span");
       spacer.className = "wm-spacer";
-      this.tabBar.appendChild(spacer);
+      tabRow.appendChild(spacer);
+      const close = this.makeButton("\u2715", "wm-tab", () => this.closeSidebar());
+      close.setAttribute("aria-label", "Close sidebar");
+      tabRow.appendChild(close);
       const modeGroup = this.doc.createElement("span");
       modeGroup.className = "wm-header-switch";
       const modeLabel = this.doc.createElement("span");
@@ -1613,12 +1624,8 @@ button.wm-corner-sidebar { width: 100%; }
       modeSwitch.setAttribute("aria-label", "Annotate mode");
       modeSwitch.title = "Annotate mode (Alt+Shift+A)";
       modeGroup.append(modeLabel, modeSwitch);
-      this.tabBar.appendChild(modeGroup);
-      this.tabBar.appendChild(this.headerActionsEl);
+      toolRow.append(modeGroup, this.headerActionsEl);
       this.renderHeaderActions();
-      const close = this.makeButton("\u2715", "wm-tab", () => this.closeSidebar());
-      close.setAttribute("aria-label", "Close sidebar");
-      this.tabBar.appendChild(close);
     }
     addHeaderAction(action) {
       this.headerActions.push(action);
