@@ -144,7 +144,8 @@ When the agent edits a local doc under the root, every open copy of that page re
 
 - **Server:** the watcher starts it unless you pass `--once` or `--no-reload`. It is `bin/firstmate-reload-server.mjs`, a Server-Sent Events endpoint at `http://127.0.0.1:<port>/events?path=<absolute doc path>`. It binds to `127.0.0.1` only.
 - **Change detection:** the server watches `<downloads>/<root>` recursively with `fs.watch`. On a change to an `.html` or `.htm` file, it sends `event: reload` to every page subscribed to that file's path.
-- **Debounce:** writes to one file within 300 ms send one reload, so an editor's save-then-rename or a multi-step write reloads once.
+- **Debounce:** writes to one file within 300 ms are checked once, so an editor's save-then-rename or a multi-step write reloads once.
+- **Content check:** a reload goes out only when the file's bytes differ from the last push, or from when the first page subscribed. This drops the stale events macOS FSEvents replays when a watch starts, and a burst that arrives as two batches. The cost: a write that lands between the page loading and its subscription is not pushed.
 - **Page side:** the userscript subscribes on `file://` pages that live under the root (the same rule as [Local docs](#local-docs-lavish-style-pages)) and calls `location.reload()` on `reload`. Web pages and local files elsewhere never connect.
 - **Reconnect:** the stream starts with `retry: 1000`, and `EventSource` reconnects on its own. A page opened while the watcher is down, or open across a watcher restart, picks up again once the server is back. Nothing is replayed: a change made while the server was down does not reload the page.
 - **Who may listen:** only requests with `Origin: null` (a `file://` page) or no Origin (a local tool such as `curl`) are served. Any other origin gets 403, so a website open in the same browser cannot subscribe.

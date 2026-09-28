@@ -6,7 +6,8 @@
 //
 // SSE rather than WebSocket: the push is one-way, node:http serves it with no
 // dependency, and the browser's EventSource reconnects on its own after a restart.
-import { realpathSync, watch } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync, watch } from "node:fs";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 
@@ -15,6 +16,15 @@ export const HOST = "127.0.0.1";
 const RELOADABLE = /\.html?$/i;
 const RETRY_MS = 1000;
 const KEEPALIVE_MS = 25_000;
+
+/** Hash of the file's bytes, or null when it cannot be read (deleted, mid-rename). */
+function contentHash(path) {
+  try {
+    return createHash("sha1").update(readFileSync(path)).digest("hex");
+  } catch {
+    return null;
+  }
+}
 
 function canonical(path) {
   const absolute = resolve(path);
@@ -36,6 +46,10 @@ function allowedOrigin(origin) {
 export function createReloadServer({ port = DEFAULT_PORT, debounceMs = 300, log = console.error } = {}) {
   const clients = new Map();
   const timers = new Map();
+  // Content each subscribed file had when last pushed (or when first subscribed).
+  // A change event whose content matches is dropped: macOS FSEvents replays
+  // events from before the watch started, and one burst can arrive as two batches.
+  const baselines = new Map();
   let watcher = null;
   let watchedDir = null;
   let lastWatchError = null;
@@ -67,24 +81,34 @@ export function createReloadServer({ port = DEFAULT_PORT, debounceMs = 300, log 
     const set = clients.get(key) ?? new Set();
     set.add(res);
     clients.set(key, set);
+    if (!baselines.has(key)) baselines.set(key, contentHash(key));
     const keepalive = setInterval(() => res.write(": keepalive\n\n"), KEEPALIVE_MS);
     req.on("close", () => {
       clearInterval(keepalive);
       set.delete(res);
-      if (!set.size) clients.delete(key);
+      if (!set.size) {
+        clients.delete(key);
+        baselines.delete(key);
+      }
     });
   });
 
   function broadcast(key) {
     const set = clients.get(key);
     if (!set?.size) return 0;
+    const hash = contentHash(key);
+    if (hash === baselines.get(key)) return 0;
+    baselines.set(key, hash);
     const message = `event: reload\ndata: ${JSON.stringify({ path: key })}\n\n`;
     for (const res of set) res.write(message);
     log(`reload ${key} -> ${set.size} page${set.size === 1 ? "" : "s"}`);
     return set.size;
   }
 
-  /** Record a change to `path`; bursts of writes within `debounceMs` send one reload. */
+  /**
+   * Record a change to `path`. Bursts within `debounceMs` collapse into one check,
+   * and a reload goes out only if the content differs from the last push.
+   */
   function notifyChange(path) {
     if (!RELOADABLE.test(path)) return;
     const key = canonical(path);

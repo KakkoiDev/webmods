@@ -94,10 +94,30 @@ describe("reload server", () => {
     const { server, port } = await start(50);
     const s = await subscribe(port, doc);
     await until(() => server.subscribers(doc) === 1);
+    writeFileSync(doc, "<p>v2</p>");
     server.notifyChange(doc);
     server.notifyChange(doc);
     server.notifyChange(join(docDir, "notes.json"));
     await until(() => s.reloads() === 1);
+    await sleep(150);
+    expect(s.reloads()).toBe(1);
+  });
+
+  it("drops change events whose content is unchanged since the page subscribed or was last reloaded", async () => {
+    // macOS FSEvents replays the doc's creation right after the watch starts, and
+    // one burst can arrive as two batches; neither may reload the page twice.
+    const { server, port } = await start(50);
+    const s = await subscribe(port, doc);
+    await until(() => server.subscribers(doc) === 1);
+
+    server.notifyChange(doc);
+    await sleep(150);
+    expect(s.reloads()).toBe(0);
+
+    writeFileSync(doc, "<p>v2</p>");
+    server.notifyChange(doc);
+    await until(() => s.reloads() === 1);
+    server.notifyChange(doc);
     await sleep(150);
     expect(s.reloads()).toBe(1);
   });
