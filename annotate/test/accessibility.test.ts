@@ -47,6 +47,18 @@ describe("keyboard access", () => {
     expect(annotator.getMode()).toBe("explore");
   });
 
+  it("ignores shortcuts typed in a field inside the sidebar", () => {
+    annotator = createAnnotator({ storage: createMemoryStorage() });
+    annotator.use({
+      name: "field",
+      setup: (ctx) => ctx.addSidebarTab({ id: "field", label: "Field", render: (c) => void c.appendChild(document.createElement("textarea")) }),
+    });
+    annotator.use({ name: "open", setup: (ctx) => ctx.activateSidebarTab("field") });
+    // Inside the shadow root, e.target at the document is the host element, not the textarea.
+    key({ key: "a", altKey: true, shiftKey: true, composed: true }, shadow().querySelector("textarea")!);
+    expect(annotator.getMode()).toBe("explore");
+  });
+
   it("Escape closes annotate mode first, then the sidebar", () => {
     annotator = createAnnotator({ storage: createMemoryStorage() });
     annotator.openSidebar();

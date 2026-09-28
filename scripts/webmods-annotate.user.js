@@ -2,7 +2,7 @@
 // @name         Webmods Annotate
 // @namespace    http://tampermonkey.net/
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM2MzY2ZjEiLz48dGV4dCB4PSIzMiIgeT0iNDIiIGZvbnQtc2l6ZT0iMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuKcj++4jzwvdGV4dD48L3N2Zz4=
-// @version      2026.09.28.7
+// @version      2026.09.28.9
 // @description  Annotate any web page with Markdown notes - robust anchors, cross-site Tampermonkey storage, notes sidebar, shareable note links, JSON export/import (Alt+Shift+A)
 // @author       KakkoiDev
 // @match        *://*/*
@@ -2151,7 +2151,7 @@ button.wm-corner-sidebar { width: 100%; }
           return;
         }
       }
-      const target = e.target;
+      const target = e.composedPath()[0] ?? e.target;
       const typing = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable && !inDocumentEditor(target));
       if (typing) return;
       const toggleShortcut = options.shortcuts?.toggle === void 0 ? DEFAULT_SHORTCUT : options.shortcuts.toggle;

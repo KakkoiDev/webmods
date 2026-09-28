@@ -404,8 +404,9 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
 
     // Typing in a field should never trigger a global shortcut. A page-wide editor
     // (Notion, Google Docs) is not a field: it holds the caret all the time, and
-    // suppressing there would leave no way to enter annotate mode.
-    const target = e.target as Element | null;
+    // suppressing there would leave no way to enter annotate mode. composedPath()
+    // sees through the UI's shadow root, where e.target is only the host element.
+    const target = (e.composedPath()[0] ?? e.target) as Element | null;
     const typing =
       !!target &&
       (target.tagName === "INPUT" ||

@@ -2220,7 +2220,7 @@ function createAnnotator(options = {}) {
         return;
       }
     }
-    const target = e.target;
+    const target = e.composedPath()[0] ?? e.target;
     const typing = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable && !inDocumentEditor(target));
     if (typing) return;
     const toggleShortcut = options.shortcuts?.toggle === void 0 ? DEFAULT_SHORTCUT : options.shortcuts.toggle;
