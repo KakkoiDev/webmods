@@ -126,34 +126,91 @@ FM_ROOT=/path/to/firstmate node annotate/bin/firstmate-drop-watch.mjs [--downloa
 - `--downloads` / `FIRSTMATE_DOWNLOADS`: the browser's Downloads folder. Default `~/Downloads`.
 - `--root` / `FIRSTMATE_ROOT`: overrides the root. Without it, the root comes from `firstmate-annotate.config.json`, falling back to `firstmate-annotate`. The watcher applies the same validation as the userscript.
 - `--fm-root` / `FM_ROOT`: the firstmate checkout holding `bin/fm-inbox.sh`. Required.
-- `--once`: process the files present now and exit. Status 1 means a file failed. Status 2 means a setup error. Without `--once`, the tree is rescanned every `--interval` ms.
-- `--port` / `FIRSTMATE_RELOAD_PORT`: the live-reload port. Without it, the port is `reloadPort` from the config file, falling back to `4817`.
-- `--no-reload`: do not start the live-reload server. `--once` never starts it.
+- `--once`: process the files present now and exit. Status 1 means a file failed. Status 2 means a setup error.
+- `--interval`: the fallback rescan, default 2000 ms. Without `--once`, the watcher also watches the tree with `fs.watch` and delivers a new file as soon as it lands.
+- `--port` / `FIRSTMATE_RELOAD_PORT`: the 127.0.0.1 server port. Without it, the port is `reloadPort` from the config file, falling back to `4817`.
+- `--no-reload`: do not start the 127.0.0.1 server (live reload, status feed, presence, docs). `--once` never starts it.
 
-The watcher scans `<downloads>/<root>` recursively, up to 8 levels deep, and skips `processed/` and `rejected/` folders. For each `firstmate-annotate-*.json` it runs `$FM_ROOT/bin/fm-inbox.sh note --request-id <sha256 of the file> -` with a Markdown rendering of the payload on stdin. The rendering names the page, the document path, and the per-URL folder.
+The watcher scans `<downloads>/<root>` recursively, up to 8 levels deep, and skips `processed/`, `rejected/` and `status/` folders. For each `firstmate-annotate-*.json` it runs `$FM_ROOT/bin/fm-inbox.sh note --request-id <sha256 of the file> -` with a Markdown rendering of the payload on stdin. The rendering names the page, the document path, the per-URL folder, the status file, and each note's id.
 
-- **Success:** the file moves to `processed/` inside its own per-URL folder, so the history stays beside the doc.
-- **Replay:** the request id makes a re-run on the same file replay the original note instead of adding a second one.
-- **Unparseable file:** it moves to `rejected/` in the same folder.
-- **Failed `fm-inbox.sh` call:** the file stays in place and is retried on the next scan.
+- **Pickup:** `fs.watch` on the root, recursive. A new drop file is delivered about 200 ms after it is written (measured with a stub `fm-inbox.sh`: 185 ms from write to `fm-inbox.sh` returning, 337 ms until a polling page saw `received`). The periodic rescan stays as a fallback. The root does not exist until the first send, so that first send waits for the rescan. Each `sent` log line gives the time since the file was written.
+- **Success:** the file moves to `processed/` inside its own per-URL folder, so the history stays beside the doc, and the watcher writes a `received` status file.
+- **Replay:** the request id makes a re-run on the same file replay the original note instead of adding a second one. A replay never overwrites a status firstmate has already moved past `received`.
+- **Unparseable file:** it moves to `rejected/` in the same folder, with a `failed` status.
+- **Failed `fm-inbox.sh` call:** the file stays in place and is retried on the next scan. The status says `failed` with the reason until a retry succeeds.
 - **Environment:** `FM_HOME` passes through to `fm-inbox.sh`.
+
+### Status files
+
+Every delivered drop file gets `<per-URL folder>/status/<request id>.json`, where the request id is the drop file's sha256 (the same id `fm-inbox.sh` got). The page shows it live. The watcher writes `received` or `failed`. Firstmate writes everything after that.
+
+```jsonc
+{
+  "format": "wm-annotate-firstmate-status",
+  "schemaVersion": 1,
+  "requestId": "<sha256>",                    // also the file name
+  "state": "received" | "assigned" | "done" | "failed",
+  "at": "2026-09-28T07:00:00.000Z",           // last update; refresh it while working
+  "message": "Delivered to firstmate as inbox note 1790581097-abc", // one line, shown on the page
+  // Written by the watcher; keep them when you rewrite the file:
+  "source": "firstmate-annotate-20260928T070000.000Z.json",
+  "inboxId": "1790581097-abc" | null,         // what fm-inbox.sh printed
+  "sentAt": "2026-09-28T06:59:59.000Z",       // the payload's sentAt
+  "noteIds": ["an_..."],                      // the notes this send carried
+  // Firstmate appends; oldest first:
+  "replies": [
+    {
+      "noteId": "an_...",                     // which note's thread
+      "author": "firstmate",                  // shown as the reply's author
+      "at": "2026-09-28T07:10:00.000Z",
+      "text": "Rewrote the intro.",           // Markdown
+      "link": "/Users/me/Downloads/firstmate-annotate/docs/plan/doc.html" | "https://..." | null,
+      "done": true                            // optional: this note is finished
+    }
+  ]
+}
+```
+
+How firstmate writes it by hand:
+
+1. **Read, change, write back.** Keep every field and change only `state`, `at`, `message`, and `replies`. Write to a temp file in the same `status/` folder whose name starts with `.`, then rename it over the status file. The server ignores dotfiles, so a page never sees half a file.
+2. **`assigned`** once a crewmate has the work. The message names the work in plain words ("Tightening the intro paragraph"). While it works, rewrite `at` at least every 10 minutes. After 10 minutes without an update the page shows the note as **stale** rather than working.
+3. **Replies** go in `replies`, one entry per message, for any note in `noteIds` or any earlier note on the same page. `done: true` on a reply marks that note done. A reply `link` may be an absolute path under the root, a `file://` URL under the root, or an `http(s)` URL. The page turns a path under the root into a `http://127.0.0.1:<port>/doc/...` link, so it opens from an https page in one click.
+4. **`done`** or **`failed`** at the end, with a one-line message. `done` marks every note in `noteIds` done.
+
+A note's state on the page is the state of the newest status that carries it in `noteIds`, except that a reply with `done: true` newer than that send marks it done.
+
+### 127.0.0.1 server
+
+The watcher starts it on `--port` unless you pass `--once` or `--no-reload`. It is `bin/firstmate-reload-server.mjs` and binds to `127.0.0.1` only. The page always opens the connection: the server cannot dial into a browser.
+
+| Route | What it does |
+| --- | --- |
+| `GET /events?path=<abs path>` or `?doc=<path under root>` | Live reload over Server-Sent Events, see below. |
+| `GET /status?folder=<per-URL folder>&since=<version>&client=<page id>` | Status feed. JSON `{ format: "wm-annotate-firstmate-feed", schemaVersion: 1, folder, version, now, statuses: [...] }`, every status file in the folder, `requestId` taken from the file name. Long poll: it answers at once when `version` differs from `since`, else holds up to 25 s and answers on the first status change (30 ms debounce) or at the timeout. |
+| `GET /presence` | Which per-URL folders have a page connected right now. JSON `{ format: "wm-annotate-firstmate-presence", schemaVersion: 1, now, folders: [{ folder, pages, since, lastSeen }] }`. A page counts while it holds a poll open and for 5 s after its last poll ended. Closing the tab ends the poll, so the folder drops off within 5 s. Try `curl -s http://127.0.0.1:4817/presence`. |
+| `GET /doc/<path under root>` | The file itself, so a reply link opens from any page. Dotfiles, directories and anything outside the root are 404. |
+
+- **Host check:** every request must carry `Host: 127.0.0.1:<port>` or `localhost:<port>` (or none), else 403. That stops DNS rebinding, where a site whose name resolves to 127.0.0.1 would read the feed or the docs.
+- **Who can read the feed:** only a `file://` page (`Origin: null`) gets a CORS header, so no website can read `/status` or `/presence` from its own script. The userscript reads them through `GM_xmlhttpRequest`, which CORS does not apply to.
+- **Why long poll and not SSE for status:** in Chrome 153 an https page cannot reach 127.0.0.1 at all. Local Network Access blocks both `fetch` and `EventSource` ("Permission was denied for this request to access the `loopback` address space"), and the request never reaches the server. `GM_xmlhttpRequest` runs outside the page, and a plain request/response is what every Tampermonkey version supports. Streaming through `GM_xmlhttpRequest` was not tested.
 
 ### Live reload
 
 When the agent edits a local doc under the root, every open copy of that page reloads itself.
 
-- **Server:** the watcher starts it unless you pass `--once` or `--no-reload`. It is `bin/firstmate-reload-server.mjs`, a Server-Sent Events endpoint at `http://127.0.0.1:<port>/events?path=<absolute doc path>`. It binds to `127.0.0.1` only.
+- **Server:** the `/events` route of the [127.0.0.1 server](#127001-server), a Server-Sent Events endpoint at `http://127.0.0.1:<port>/events?path=<absolute doc path>`. A doc opened through `/doc/<path>` subscribes with `?doc=<path>` instead.
 - **Change detection:** the server watches `<downloads>/<root>` recursively with `fs.watch`. On a change to an `.html` or `.htm` file, it sends `event: reload` to every page subscribed to that file's path.
 - **Debounce:** writes to one file within 300 ms are checked once, so an editor's save-then-rename or a multi-step write reloads once.
 - **Content check:** a reload goes out only when the file's bytes differ from the last push, or from when the first page subscribed. This drops the stale events macOS FSEvents replays when a watch starts, and a burst that arrives as two batches. The cost: a write that lands between the page loading and its subscription is not pushed.
 - **Page side:** the userscript subscribes on `file://` pages that live under the root (the same rule as [Local docs](#local-docs-lavish-style-pages)) and calls `location.reload()` on `reload`. Web pages and local files elsewhere never connect.
 - **Reconnect:** the stream starts with `retry: 1000`, and `EventSource` reconnects on its own. A page opened while the watcher is down, or open across a watcher restart, picks up again once the server is back. Nothing is replayed: a change made while the server was down does not reload the page.
-- **Who may listen:** only requests with `Origin: null` (a `file://` page) or no Origin (a local tool such as `curl`) are served. Any other origin gets 403, so a website open in the same browser cannot subscribe.
+- **Who may listen:** only requests with `Origin: null` (a `file://` page), the server's own origin (a doc it serves), or no Origin (a local tool such as `curl`) are served. Any other origin gets 403, so a website open in the same browser cannot subscribe.
 - **Port:** default `4817`. Change it with **Set firstmate reload port…** (menu) or **Firstmate > Reload port…** (sidebar). The userscript connects on its setting at page load. The watcher reads it from the config file at startup, so send once and restart the watcher after changing it.
 
 Why SSE and not WebSocket: the push is one-way (server to page), `node:http` serves SSE with no dependency, and `EventSource` reconnects without any client code.
 
-Not verified in a browser: that Chrome lets a `file://` page (as a Tampermonkey userscript) open an `EventSource` to `127.0.0.1`, and that it sends `Origin: null`. Chrome's Local Network Access checks could also prompt for or block this. The server path is covered by tests. The browser path is not.
+Verified in headless Chrome 153 (2026-09-28), from page script rather than from Tampermonkey: a `file://` page opens an `EventSource` to `127.0.0.1` without a prompt and sends `Origin: null`. An https page cannot, which is why the status feed does not use `EventSource`.
 
 ### JSON schema
 

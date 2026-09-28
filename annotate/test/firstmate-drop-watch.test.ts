@@ -1,11 +1,19 @@
 // @vitest-environment node
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkRoot, renderMarkdown, resolveRoot, scanOnce } from "../bin/firstmate-drop-watch.mjs";
+import {
+  checkRoot,
+  inboxIdOf,
+  isDropPath,
+  renderMarkdown,
+  resolveRoot,
+  scanOnce,
+  servedDocPath,
+} from "../bin/firstmate-drop-watch.mjs";
 
 const WATCHER = join(__dirname, "..", "bin", "firstmate-drop-watch.mjs");
 
@@ -44,6 +52,7 @@ const expectedMarkdown = `# Annotate feedback: Plan
 
 ## Note 1 of 2
 
+- Note id: n1
 - Anchor: range \`#intro > p\`
 - Created: 2026-09-28T03:00:00.000Z, updated: 2026-09-28T03:10:00.000Z
 
@@ -54,6 +63,7 @@ Tighten **this**.
 
 ## Note 2 of 2
 
+- Note id: n2
 - Anchor: block
 - Created: 2026-09-28T03:01:00.000Z, updated: 2026-09-28T03:01:00.000Z
 
@@ -67,9 +77,9 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$here/fail" ] && { echo "stub failure" >&2; exit 1; }
 [ "$1" = note ] && [ "$2" = --request-id ] && [ "$4" = - ] || { echo "bad args: $*" >&2; exit 2; }
 mkdir -p "$here/notes"
-if [ -f "$here/notes/$3" ]; then echo replay; exit 0; fi
+if [ -f "$here/notes/$3" ]; then echo "replay fm-$3"; exit 0; fi
 cat > "$here/notes/$3"
-echo created
+echo "queued fm-$3"
 `;
 
 let root: string;
@@ -172,6 +182,121 @@ describe("scanOnce", () => {
     expect(scanOnce(tree, options())).toEqual(["rejected"]);
     expect(existsSync(join(folder, "rejected", name))).toBe(true);
     expect(existsSync(join(fmRoot, "notes"))).toBe(false);
+  });
+  const statusFile = () => join(folder, "status", `${digest}.json`);
+  const readStatus = () => JSON.parse(readFileSync(statusFile(), "utf8"));
+  const at = () => Date.UTC(2026, 8, 28, 7, 0, 0);
+
+  it("writes a received status beside the notes, naming the inbox id and the notes it covers", () => {
+    writeFileSync(join(folder, name), text);
+    scanOnce(tree, { ...options(), now: at });
+    expect(readStatus()).toEqual({
+      format: "wm-annotate-firstmate-status",
+      schemaVersion: 1,
+      requestId: digest,
+      state: "received",
+      at: "2026-09-28T07:00:00.000Z",
+      message: `Delivered to firstmate as inbox note fm-${digest}`,
+      source: name,
+      inboxId: `fm-${digest}`,
+      sentAt: payload.sentAt,
+      noteIds: ["n1", "n2"],
+      replies: [],
+    });
+    const note = readFileSync(join(fmRoot, "notes", digest), "utf8");
+    expect(note).toContain(`- Status file: \`${statusFile()}\``);
+    expect(note).toContain("- Note id: n1");
+    expect(readdirSync(join(folder, "status"))).toEqual([`${digest}.json`]);
+  });
+
+  it("writes failed while fm-inbox.sh fails, then received once it succeeds", () => {
+    writeFileSync(join(folder, name), text);
+    writeFileSync(join(fmRoot, "fail"), "");
+    scanOnce(tree, options());
+    expect(readStatus()).toMatchObject({ state: "failed", message: "Not delivered, retrying: fm-inbox.sh exited 1: stub failure" });
+    rmSync(join(fmRoot, "fail"));
+    scanOnce(tree, options());
+    expect(readStatus()).toMatchObject({ state: "received", inboxId: `fm-${digest}` });
+  });
+
+  it("never resets firstmate's progress when the same file is dropped again", () => {
+    writeFileSync(join(folder, name), text);
+    scanOnce(tree, options());
+    const assigned = { ...readStatus(), state: "assigned", message: "Tightening the intro", at: "2026-09-28T07:05:00.000Z" };
+    writeFileSync(statusFile(), JSON.stringify(assigned));
+    writeFileSync(join(folder, name), text);
+    scanOnce(tree, options());
+    expect(readStatus()).toEqual(assigned);
+  });
+
+  it("records a rejected file as a failed status", () => {
+    writeFileSync(join(folder, name), "{not json");
+    scanOnce(tree, options());
+    const [file] = readdirSync(join(folder, "status"));
+    const status = JSON.parse(readFileSync(join(folder, "status", file), "utf8"));
+    expect(status).toMatchObject({ state: "failed", source: name, noteIds: [] });
+    expect(status.message).toMatch(/^Rejected: /);
+  });
+
+  it("names the document of a page served from the 127.0.0.1 server", () => {
+    const served = { ...payload, page: { url: "http://127.0.0.1:4817/doc/docs/plan/doc.html", title: "Plan", localPath: null } };
+    writeFileSync(join(folder, name), JSON.stringify(served));
+    scanOnce(tree, options());
+    const [id] = readdirSync(join(fmRoot, "notes"));
+    expect(readFileSync(join(fmRoot, "notes", id), "utf8")).toContain(`- Document: \`${join(tree, "docs", "plan", "doc.html")}\``);
+  });
+});
+
+describe("helpers", () => {
+  it("resolves served docs under the root only", () => {
+    expect(servedDocPath("http://127.0.0.1:4817/doc/docs/a%20b/doc.html?x=1", "/dl/root")).toBe("/dl/root/docs/a b/doc.html");
+    expect(servedDocPath("http://localhost:5000/doc/x.html", "/dl/root")).toBe("/dl/root/x.html");
+    expect(servedDocPath("http://127.0.0.1:4817/doc/..%2F..%2Foutside.txt", "/dl/root")).toBeNull();
+    expect(servedDocPath("https://example.com/doc/x.html", "/dl/root")).toBeNull();
+  });
+
+  it("reads the inbox id fm-inbox.sh prints and spots drop files by path", () => {
+    expect(inboxIdOf("queued 1790581097-abc\n  summary\n")).toBe("1790581097-abc");
+    expect(inboxIdOf("replay 17-x\n")).toBe("17-x");
+    expect(inboxIdOf("something else")).toBeNull();
+    expect(isDropPath("example.com/a/firstmate-annotate-1.json")).toBe(true);
+    expect(isDropPath("example.com/a/processed/firstmate-annotate-1.json")).toBe(false);
+    expect(isDropPath("example.com/a/status/abc.json")).toBe(false);
+    expect(isDropPath("example.com/a/doc.html")).toBe(false);
+  });
+});
+
+describe("watcher CLI instant pickup", () => {
+  it("delivers a new drop through fs.watch long before the fallback rescan", async () => {
+    const folder = join(drop, "firstmate-annotate", "example.com", "a");
+    mkdirSync(folder, { recursive: true });
+    // The fallback rescan is a minute away, so only fs.watch can deliver in time.
+    const child = spawn("node", [WATCHER, "--downloads", drop, "--no-reload", "--interval", "60000"], {
+      env: { ...process.env, FM_ROOT: fmRoot },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (c) => (stderr += c));
+    const until = async (check: () => boolean, ms: number) => {
+      const end = Date.now() + ms;
+      while (!check()) {
+        if (Date.now() > end) throw new Error(`timed out; stderr: ${stderr}`);
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    };
+    try {
+      await until(() => stderr.includes("watching"), 5000);
+      await new Promise((r) => setTimeout(r, 300));
+      const written = Date.now();
+      writeFileSync(join(folder, "firstmate-annotate-20260928T070000.000Z.json"), JSON.stringify(payload));
+      await until(() => existsSync(join(fmRoot, "notes")) && readdirSync(join(fmRoot, "notes")).length === 1, 3000);
+      const elapsed = Date.now() - written;
+      expect(elapsed).toBeLessThan(1500);
+      await until(() => /ms after write\)/.test(stderr), 2000);
+      console.log(`instant pickup: note delivered ${elapsed}ms after write; watcher log: ${stderr.match(/\d+ms after write/)?.[0]}`);
+    } finally {
+      child.kill();
+    }
   });
 });
 

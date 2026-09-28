@@ -165,7 +165,7 @@ describe("watcher CLI live reload", () => {
     let stderr = "";
     child.stderr.on("data", (c) => (stderr += c));
     cleanups.push(() => child.kill());
-    await until(() => stderr.includes(`live reload on http://127.0.0.1:${port}/events`) && stderr.includes("watching"));
+    await until(() => stderr.includes(`live reload and status feed on http://127.0.0.1:${port}`) && stderr.includes("watching"));
     await sleep(200);
 
     const s = await subscribe(port, doc, { origin: "null" });
