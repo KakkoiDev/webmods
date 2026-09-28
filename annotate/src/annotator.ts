@@ -491,6 +491,8 @@ export function createAnnotator(options: AnnotatorOptions = {}): Annotator {
       addSidebarTab: (tab) => ui.addTab(tab),
       addNoteAction: (action) => ui.addNoteAction(action),
       addHeaderAction: (action) => ui.addHeaderAction(action),
+      addNoteSection: (section) => ui.addNoteSection(section),
+      addStatusItem: (el) => ui.addStatusItem(el),
       activateSidebarTab: (id) => {
         ui.openSidebar();
         ui.activateTab(id);

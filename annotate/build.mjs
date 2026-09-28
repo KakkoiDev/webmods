@@ -91,6 +91,8 @@ const header = `// ==UserScript==
 // @grant        GM_xmlhttpRequest
 // @grant        GM_download
 // @connect      api.github.com
+// @connect      127.0.0.1
+// @connect      localhost
 // @license      MIT
 // @updateURL    https://raw.githubusercontent.com/KakkoiDev/webmods/main/scripts/webmods-annotate.user.js
 // @downloadURL  https://raw.githubusercontent.com/KakkoiDev/webmods/main/scripts/webmods-annotate.user.js

@@ -23,14 +23,17 @@ var WebmodsAnnotate = (() => {
   var index_exports = {};
   __export(index_exports, {
     ARCHIVED_KEY: () => ARCHIVED_KEY,
+    BACKOFF_MAX_MS: () => BACKOFF_MAX_MS,
     DEFAULT_RELOAD_PORT: () => DEFAULT_RELOAD_PORT,
     DEFAULT_ROOT: () => DEFAULT_ROOT,
     DocumentStorage: () => DocumentStorage,
     FIRSTMATE_CONFIG_FILENAME: () => FIRSTMATE_CONFIG_FILENAME,
     FIRSTMATE_FORMAT: () => FIRSTMATE_FORMAT,
     FIRSTMATE_PORT_SETTING: () => FIRSTMATE_PORT_SETTING,
+    FIRSTMATE_REPLIES_KEY: () => FIRSTMATE_REPLIES_KEY,
     FIRSTMATE_ROOT_SETTING: () => FIRSTMATE_ROOT_SETTING,
     FIRSTMATE_SCHEMA_VERSION: () => FIRSTMATE_SCHEMA_VERSION,
+    FIRSTMATE_SENDS_SETTING: () => FIRSTMATE_SENDS_SETTING,
     FIRSTMATE_SENT_SETTING: () => FIRSTMATE_SENT_SETTING,
     FOLDER_MAX: () => FOLDER_MAX,
     GIST_FILENAME: () => GIST_FILENAME,
@@ -39,10 +42,14 @@ var WebmodsAnnotate = (() => {
     HOST_MAX: () => HOST_MAX,
     INLINE_FRAGMENT_PARAM: () => INLINE_FRAGMENT_PARAM,
     NOTE_FRAGMENT_PARAM: () => NOTE_FRAGMENT_PARAM,
+    NO_RECEIPT_MS: () => NO_RECEIPT_MS,
     ROOT_MAX: () => ROOT_MAX,
     SCHEMA_VERSION: () => SCHEMA_VERSION,
     SLUG_MAX: () => SLUG_MAX,
+    STALE_AFTER_MS: () => STALE_AFTER_MS,
+    STATUS_FORMAT: () => STATUS_FORMAT,
     archivedAt: () => archivedAt,
+    backoffMs: () => backoffMs,
     blockTextWithMap: () => blockTextWithMap,
     buildExcludeFn: () => buildExcludeFn,
     buildFirstmatePayload: () => buildFirstmatePayload,
@@ -50,6 +57,7 @@ var WebmodsAnnotate = (() => {
     buildSelector: () => buildSelector,
     buildSystemPrompt: () => buildSystemPrompt,
     buildXPath: () => buildXPath,
+    captainReplies: () => captainReplies,
     collectPages: () => collectPages,
     colocatedFolder: () => colocatedFolder,
     copyText: () => copyText,
@@ -73,6 +81,7 @@ var WebmodsAnnotate = (() => {
     createPortableDataPlugin: () => createPortableDataPlugin,
     createRangeAnchor: () => createRangeAnchor,
     createTampermonkeyStorage: () => createTampermonkeyStorage,
+    docPathOf: () => docPathOf,
     download: () => download,
     emptyDB: () => emptyDB,
     exportFilename: () => exportFilename,
@@ -92,18 +101,28 @@ var WebmodsAnnotate = (() => {
     normalizeText: () => normalizeText,
     normalizeUrl: () => normalizeUrl,
     noteLink: () => noteLink,
+    noteProgress: () => noteProgress,
     parseGistId: () => parseGistId,
     parsePort: () => parsePort,
     parseRoot: () => parseRoot,
     parseSSE: () => parseSSE,
+    pathUnderRoot: () => pathUnderRoot,
+    progressOf: () => progressOf,
     rangeOffsets: () => rangeOffsets,
     reloadEventsURL: () => reloadEventsURL,
     renderMarkdown: () => renderMarkdown,
+    repliesFor: () => repliesFor,
+    replyHref: () => replyHref,
     resolveAnchor: () => resolveAnchor,
     resolveRangeInBlock: () => resolveRangeInBlock,
     sanitizeSegment: () => sanitizeSegment,
     scoreBlock: () => scoreBlock,
     searchAnnotations: () => searchAnnotations,
+    sendProgress: () => sendProgress,
+    servedDocRel: () => servedDocRel,
+    startFeed: () => startFeed,
+    statusFeedURL: () => statusFeedURL,
+    statusForSend: () => statusForSend,
     stripOwnFragment: () => stripOwnFragment,
     tampermonkeyStorage: () => createTampermonkeyStorage,
     textSimilarity: () => textSimilarity,
@@ -772,7 +791,7 @@ var WebmodsAnnotate = (() => {
     }
   };
   function generateId() {
-    const time = Date.now().toString(36).padStart(9, "0");
+    const time2 = Date.now().toString(36).padStart(9, "0");
     let rand = "";
     if (typeof crypto !== "undefined" && crypto.getRandomValues) {
       const bytes = crypto.getRandomValues(new Uint8Array(10));
@@ -781,7 +800,7 @@ var WebmodsAnnotate = (() => {
       while (rand.length < 10) rand += Math.random().toString(36).slice(2);
       rand = rand.slice(0, 10);
     }
-    return `${time}${rand}`;
+    return `${time2}${rand}`;
   }
 
   // src/types.ts
@@ -1332,6 +1351,16 @@ button.wm-switch[aria-checked="true"] { background: #6366f1; }
 button.wm-switch[aria-checked="true"]::after { left: 17px; }
 button.wm-switch:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
 button.wm-corner-sidebar { width: 100%; }
+.wm-status:empty { display: none; }
+.wm-status-docked { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: #57606a; }
+.wm-status-float {
+  position: fixed; bottom: 14px; left: 14px; pointer-events: auto; display: flex; flex-direction: column; gap: 3px;
+  max-width: 320px; font-size: 12px; color: #1f2328; background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+  padding: 6px 10px; box-shadow: 0 6px 20px rgba(31,35,40,0.16);
+}
+.wm-status-float > [data-quiet="true"] { display: none; }
+.wm-status-float:not(:has(> :not([data-quiet="true"]))) { display: none; }
+.wm-note-section:empty { display: none; }
 .wm-mode-pill {
   position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
   pointer-events: none; background: #1f2328; color: #fff; font-size: 12px; font-weight: 600;
@@ -1356,6 +1385,7 @@ button.wm-corner-sidebar { width: 100%; }
       } }];
       this.noteActions = [];
       this.headerActions = [];
+      this.noteSections = [];
       this.activeTab = "notes";
       this.tabCleanup = null;
       this.notes = [];
@@ -1403,6 +1433,10 @@ button.wm-corner-sidebar { width: 100%; }
       this.sidebarBody.className = "wm-sidebar-body";
       this.sidebar.appendChild(this.sidebarBody);
       this.layer.appendChild(this.sidebar);
+      this.statusHost = doc.createElement("div");
+      this.statusHost.className = "wm-status wm-status-float";
+      this.statusHost.setAttribute("role", "status");
+      this.layer.appendChild(this.statusHost);
       if (options.cornerWidget) this.buildCornerWidget();
       doc.documentElement.appendChild(this.host);
       const reposition = () => this.scheduleReposition();
@@ -1733,7 +1767,21 @@ button.wm-corner-sidebar { width: 100%; }
     }
     closeSidebar() {
       this.sidebar.classList.remove("wm-open");
+      this.statusHost.className = "wm-status wm-status-float";
+      this.layer.appendChild(this.statusHost);
       this.positionCorner();
+    }
+    addStatusItem(el) {
+      this.statusHost.appendChild(el);
+      return () => el.remove();
+    }
+    addNoteSection(section) {
+      this.noteSections.push(section);
+      this.renderNotesTab();
+      return () => {
+        this.noteSections = this.noteSections.filter((s) => s !== section);
+        this.renderNotesTab();
+      };
     }
     /** Open the sidebar on the Notes tab with one note's card scrolled into view and emphasized. */
     focusNote(id) {
@@ -1808,6 +1856,8 @@ button.wm-corner-sidebar { width: 100%; }
       modeGroup.append(modeLabel, modeSwitch);
       toolRow.append(modeGroup, this.headerActionsEl);
       this.renderHeaderActions();
+      this.statusHost.className = "wm-status wm-status-docked";
+      this.tabBar.appendChild(this.statusHost);
     }
     addHeaderAction(action) {
       this.headerActions.push(action);
@@ -1983,6 +2033,15 @@ button.wm-corner-sidebar { width: 100%; }
           card.appendChild(img);
         }
       }
+      if (!archivedCard) {
+        for (const section of this.noteSections) {
+          const container = this.doc.createElement("div");
+          container.className = "wm-note-section";
+          container.dataset.sectionId = section.id;
+          section.render(note.annotation, container);
+          card.appendChild(container);
+        }
+      }
       const actions = this.doc.createElement("div");
       actions.className = "wm-note-actions";
       const id = note.annotation.id;
@@ -2007,10 +2066,11 @@ button.wm-corner-sidebar { width: 100%; }
         if (!detached && !archivedCard) this.noteCallbacks.onNavigate(id);
       };
       card.addEventListener("click", (e) => {
-        if (e.target.closest("button")) return;
+        if (e.target.closest("button, a, textarea, input")) return;
         navigate();
       });
       card.addEventListener("keydown", (e) => {
+        if (e.target !== card) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           navigate();
@@ -2402,6 +2462,8 @@ button.wm-corner-sidebar { width: 100%; }
         addSidebarTab: (tab) => ui.addTab(tab),
         addNoteAction: (action) => ui.addNoteAction(action),
         addHeaderAction: (action) => ui.addHeaderAction(action),
+        addNoteSection: (section) => ui.addNoteSection(section),
+        addStatusItem: (el) => ui.addStatusItem(el),
         activateSidebarTab: (id) => {
           ui.openSidebar();
           ui.activateTab(id);
@@ -3341,17 +3403,197 @@ ${result.url}
     }
     return null;
   }
+  function servedDocRel(url) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return null;
+    }
+    if (parsed.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(parsed.hostname)) return null;
+    if (!parsed.pathname.startsWith("/doc/")) return null;
+    const rel = safeDecode(parsed.pathname.slice("/doc/".length));
+    return rel && !rel.split("/").some((s) => s === "." || s === "..") ? rel : null;
+  }
+  function docPathOf(url, root) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return null;
+    }
+    if (parsed.protocol === "file:") return safeDecode(parsed.pathname);
+    const rel = servedDocRel(url);
+    return rel ? `/${[...root, rel].join("/")}` : null;
+  }
   function folderFor(url, root, localPath = null) {
     const colocated = localPath ? colocatedFolder(localPath, root) : null;
     return (colocated ?? [...root, ...urlSegments(url)]).join("/");
+  }
+
+  // src/plugins/firstmate-feed.ts
+  var STATUS_FORMAT = "wm-annotate-firstmate-status";
+  var STALE_AFTER_MS = 10 * 6e4;
+  var NO_RECEIPT_MS = 1e4;
+  var BACKOFF_MAX_MS = 5e3;
+  var time = (iso) => {
+    const t = Date.parse(iso ?? "");
+    return Number.isFinite(t) ? t : 0;
+  };
+  function progressOf(status, now) {
+    if (status.state === "done") return "done";
+    if (status.state === "failed") return "failed";
+    if (status.state === "assigned") return now - time(status.at) > STALE_AFTER_MS ? "stale" : "working";
+    return "received";
+  }
+  function view(status, now) {
+    return { progress: progressOf(status, now), message: status.message ?? "", at: time(status.at) };
+  }
+  function statusForSend(send, statuses) {
+    const sentAt = new Date(send.sentAt).toISOString();
+    return statuses.find((s) => s.source === send.source) ?? statuses.find((s) => s.sentAt === sentAt) ?? null;
+  }
+  function sendProgress(send, statuses, now) {
+    const status = statusForSend(send, statuses);
+    if (status) return view(status, now);
+    return now - send.sentAt >= NO_RECEIPT_MS ? { progress: "no-receipt", message: "", at: send.sentAt } : { progress: "sent", message: "", at: send.sentAt };
+  }
+  function repliesFor(noteId, statuses) {
+    return statuses.flatMap((s) => Array.isArray(s.replies) ? s.replies : []).filter((r) => r && r.noteId === noteId && typeof r.text === "string").sort((a, b) => time(a.at) - time(b.at));
+  }
+  function noteProgress(noteId, statuses, now) {
+    const carrying = statuses.filter((s) => Array.isArray(s.noteIds) && s.noteIds.includes(noteId)).sort((a, b) => time(a.sentAt ?? a.at) - time(b.sentAt ?? b.at));
+    const latest = carrying[carrying.length - 1] ?? null;
+    const closing = repliesFor(noteId, statuses).filter((r) => r.done).pop();
+    if (closing && (!latest || time(closing.at) >= time(latest.sentAt ?? latest.at))) {
+      return { progress: "done", message: closing.text.split("\n")[0], at: time(closing.at) };
+    }
+    return latest ? view(latest, now) : null;
+  }
+  function pathUnderRoot(path, root) {
+    const parts = path.split("/").filter(Boolean);
+    for (let at = parts.length - root.length - 1; at >= 0; at--) {
+      if (!root.every((segment, i) => parts[at + i] === segment)) continue;
+      const rest = parts.slice(at + root.length);
+      return rest.length && rest.every((s) => s !== "." && s !== "..") ? rest : null;
+    }
+    return null;
+  }
+  function replyHref(link, root, port, fromFilePage) {
+    if (!link) return null;
+    let path = null;
+    if (link.startsWith("/")) path = link;
+    else {
+      let url;
+      try {
+        url = new URL(link);
+      } catch {
+        return null;
+      }
+      if (url.protocol === "http:" || url.protocol === "https:") return url.href;
+      if (url.protocol !== "file:") return null;
+      try {
+        path = decodeURIComponent(url.pathname);
+      } catch {
+        return null;
+      }
+    }
+    const rest = pathUnderRoot(path, root);
+    if (rest) return `http://127.0.0.1:${port}/doc/${rest.map(encodeURIComponent).join("/")}`;
+    return fromFilePage ? `file://${path.split("/").map(encodeURIComponent).join("/")}` : null;
+  }
+  var realTimers = {
+    set: (run, ms) => setTimeout(run, ms),
+    clear: (handle) => clearTimeout(handle)
+  };
+  function backoffMs(failures) {
+    return Math.min(BACKOFF_MAX_MS, 500 * 2 ** Math.max(0, failures - 1));
+  }
+  function startFeed(options) {
+    const timers = options.timers ?? realTimers;
+    let since = "";
+    let failures = 0;
+    let stopped = false;
+    let handle = null;
+    const next = (ms) => {
+      if (!stopped) handle = timers.set(() => void poll(), ms);
+    };
+    async function poll() {
+      if (stopped) return;
+      let feed;
+      try {
+        const response = await options.request(options.url(since));
+        if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
+        feed = JSON.parse(response.text);
+        if (!Array.isArray(feed?.statuses) || typeof feed.version !== "string") throw new Error("not a status feed");
+      } catch {
+        if (stopped) return;
+        since = "";
+        failures++;
+        options.onConnection(false);
+        next(backoffMs(failures));
+        return;
+      }
+      if (stopped) return;
+      failures = 0;
+      options.onConnection(true);
+      if (feed.version !== since) {
+        since = feed.version;
+        options.onFeed(feed);
+      }
+      next(0);
+    }
+    next(0);
+    return {
+      stop() {
+        stopped = true;
+        timers.clear(handle);
+      }
+    };
   }
 
   // src/plugins/firstmate.ts
   var FIRSTMATE_SENT_SETTING = "firstmate.sent";
   var FIRSTMATE_ROOT_SETTING = "firstmate.root";
   var FIRSTMATE_PORT_SETTING = "firstmate.reloadPort";
+  var FIRSTMATE_SENDS_SETTING = "firstmate.sends";
+  var FIRSTMATE_REPLIES_KEY = "firstmateReplies";
   var DEFAULT_RELOAD_PORT = 4817;
   var FIRSTMATE_CONFIG_FILENAME = "firstmate-annotate.config.json";
+  var SETTLED_MS = 1e4;
+  var CSS4 = `
+.wm-fm-status { display: flex; align-items: center; gap: 6px; min-width: 0; color: #57606a; }
+.wm-fm-status[data-empty="true"] { display: none; }
+.wm-fm-status.wm-fm-failed, .wm-fm-status.wm-fm-no-receipt { color: #d1242f; }
+.wm-fm-status.wm-fm-stale { color: #9a6700; }
+.wm-fm-status.wm-fm-done { color: #1a7f37; }
+.wm-fm-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; box-sizing: border-box; background: #8c959f; }
+.wm-fm-dot[data-on="true"] { background: #1a7f37; }
+.wm-fm-dot[data-on="false"] { background: transparent; border: 1.5px solid #d1242f; }
+.wm-fm-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wm-note-section[data-section-id="firstmate"] {
+  display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eaeef2; font-size: 12px;
+}
+.wm-fm-note-state {
+  align-self: flex-start; font-size: 11px; padding: 1px 8px; border-radius: 999px;
+  background: #f6f8fa; color: #57606a; border: 1px solid #d0d7de;
+}
+.wm-fm-note-state.wm-fm-working { background: #ddf4ff; color: #0969da; border-color: #b6e3ff; }
+.wm-fm-note-state.wm-fm-done { background: #dafbe1; color: #1a7f37; border-color: #aceebb; }
+.wm-fm-note-state.wm-fm-failed, .wm-fm-note-state.wm-fm-no-receipt { background: #ffebe9; color: #d1242f; border-color: #ffcecb; }
+.wm-fm-note-state.wm-fm-stale { background: #fff8c5; color: #9a6700; border-color: #eed888; }
+.wm-fm-reply { border-left: 2px solid #d0d7de; padding-left: 8px; }
+.wm-fm-reply:not(.wm-fm-mine) { border-left-color: #0969da; }
+.wm-fm-reply-head { font-size: 11px; color: #57606a; margin-bottom: 2px; }
+.wm-fm-reply .wm-note-body { font-size: 12.5px; }
+.wm-fm-reply .wm-note-body p { margin: 0; }
+a.wm-fm-link { font-size: 12px; color: #0969da; }
+.wm-fm-reply-form { display: flex; gap: 6px; align-items: flex-end; }
+.wm-fm-reply-box {
+  flex: 1; min-width: 0; resize: vertical; font: inherit; font-size: 12px; padding: 4px 6px;
+  border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #1f2328;
+}
+`;
   function parsePort(input) {
     const text = String(input ?? "").trim();
     if (!text) return DEFAULT_RELOAD_PORT;
@@ -3361,6 +3603,9 @@ ${result.url}
   }
   function reloadEventsURL(port, localPath) {
     return `http://127.0.0.1:${port}/events?path=${encodeURIComponent(localPath)}`;
+  }
+  function statusFeedURL(port, folder, since, client) {
+    return `http://127.0.0.1:${port}/status?folder=${encodeURIComponent(folder)}&since=${encodeURIComponent(since)}&client=${encodeURIComponent(client)}`;
   }
   var FIRSTMATE_FORMAT = "wm-annotate-firstmate";
   var FIRSTMATE_SCHEMA_VERSION = 1;
@@ -3381,6 +3626,10 @@ ${result.url}
     const next = { ...sent };
     for (const n of notes) next[n.id] = n.updatedAt;
     return next;
+  }
+  function captainReplies(annotation) {
+    const replies = annotation.metadata?.[FIRSTMATE_REPLIES_KEY];
+    return Array.isArray(replies) ? replies.filter((r) => typeof r?.text === "string" && typeof r?.at === "string") : [];
   }
   function buildFirstmatePayload(page, notes, now, folder) {
     return {
@@ -3403,6 +3652,7 @@ ${result.url}
           suffix: n.anchor.textQuote?.suffix ?? null
         },
         body: n.body.text,
+        replies: captainReplies(n),
         createdAt: new Date(n.createdAt).toISOString(),
         updatedAt: new Date(n.updatedAt).toISOString()
       }))
@@ -3411,12 +3661,61 @@ ${result.url}
   function firstmateFilename(now) {
     return `firstmate-annotate-${new Date(now).toISOString().replace(/[-:]/g, "")}.json`;
   }
+  var PROGRESS_TEXT = {
+    sent: "Sent, waiting for the watcher",
+    "no-receipt": "No receipt after 10 s. Is the watcher running?",
+    received: "Received, waiting for an agent",
+    working: "Being worked on",
+    stale: "No update for over 10 min",
+    done: "Done",
+    failed: "Failed"
+  };
+  function shownMessage(view2) {
+    return view2.message && view2.progress !== "received" ? `: ${view2.message}` : "";
+  }
+  function relativeTime(ms) {
+    const s = Math.max(0, Math.round(ms / 1e3));
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.round(s / 60)}m ago`;
+    return `${Math.round(s / 3600)}h ago`;
+  }
+  function randomId() {
+    return Math.random().toString(36).slice(2, 10);
+  }
   function createFirstmatePlugin(options) {
     let ctx = null;
     const cleanups = [];
     const ask = options.prompt ?? ((message, initial) => globalThis.prompt?.(message, initial) ?? null);
     const notify = options.notify ?? ((message) => globalThis.alert?.(message));
     const now = options.now ?? Date.now;
+    const timers = options.timers ?? realTimers;
+    const request = options.request === false ? null : options.request ?? (typeof fetch === "function" ? async (url) => {
+      const res = await fetch(url, { cache: "no-store" });
+      return { status: res.status, text: await res.text() };
+    } : null);
+    const client = randomId();
+    let folder = null;
+    let feed = null;
+    let connected = null;
+    let lastSend = null;
+    let sentMap = {};
+    let loop = null;
+    let tick = null;
+    let sectionSignature = "";
+    const sections = /* @__PURE__ */ new Map();
+    const drafts = /* @__PURE__ */ new Map();
+    const statusEl = typeof document === "undefined" ? null : document.createElement("div");
+    const statusDot = statusEl ? document.createElement("span") : null;
+    const statusText = statusEl ? document.createElement("span") : null;
+    if (statusEl && statusDot && statusText) {
+      const style = document.createElement("style");
+      style.textContent = CSS4;
+      statusDot.className = "wm-fm-dot";
+      statusText.className = "wm-fm-text";
+      statusEl.append(style, statusDot, statusText);
+      statusEl.setAttribute("data-quiet", "true");
+      statusEl.setAttribute("data-empty", "true");
+    }
     const requireCtx = () => {
       if (!ctx) throw new Error("firstmate plugin is not attached to an annotator (call annotator.use(plugin) first)");
       return ctx;
@@ -3429,17 +3728,218 @@ ${result.url}
       const stored = await requireCtx().storage.getSetting?.(FIRSTMATE_PORT_SETTING);
       return parsePort(typeof stored === "number" ? stored : null);
     }
+    async function getSends() {
+      const stored = await requireCtx().storage.getSetting?.(FIRSTMATE_SENDS_SETTING);
+      return stored && typeof stored === "object" ? stored : {};
+    }
+    async function folderOf(page) {
+      const root = await getRoot();
+      const docPath = docPathOf(page.url, root);
+      return { folder: folderFor(page.url, root, docPath), root, docPath };
+    }
     const liveReload = options.liveReload === false ? null : options.liveReload ?? (typeof EventSource === "function" ? {
       connect: (url) => new EventSource(url),
       reload: () => globalThis.location.reload()
     } : null);
     async function startLiveReload() {
       if (!liveReload) return;
-      const localPath = localPathOf(requireCtx().getPage().url);
-      if (!localPath || !colocatedFolder(localPath, await getRoot())) return;
-      const source = liveReload.connect(reloadEventsURL(await getPort(), localPath));
+      const url = requireCtx().getPage().url;
+      const localPath = localPathOf(url);
+      let source;
+      if (localPath) {
+        if (!colocatedFolder(localPath, await getRoot())) return;
+        source = liveReload.connect(reloadEventsURL(await getPort(), localPath));
+      } else {
+        const rel = servedDocRel(url);
+        if (!rel) return;
+        source = liveReload.connect(`${new URL(url).origin}/events?doc=${encodeURIComponent(rel)}`);
+      }
       source.addEventListener("reload", () => liveReload.reload());
       cleanups.push(() => source.close());
+    }
+    const statuses = () => feed?.statuses ?? [];
+    function currentSendView() {
+      return lastSend ? sendProgress(lastSend, statuses(), now()) : null;
+    }
+    function renderStatus() {
+      if (!statusEl || !statusDot || !statusText) return;
+      const view2 = currentSendView();
+      const settled = !view2 || (view2.progress === "done" || view2.progress === "failed") && now() - view2.at > SETTLED_MS;
+      statusEl.setAttribute("data-quiet", String(settled));
+      let text = "";
+      if (view2) {
+        const count = lastSend?.noteIds.length ?? 0;
+        text = `Firstmate: ${PROGRESS_TEXT[view2.progress]}${shownMessage(view2)}`;
+        if (view2.progress !== "sent" && view2.progress !== "no-receipt") text += ` (${count} note${count === 1 ? "" : "s"})`;
+      } else if (connected !== null) {
+        text = connected ? "Firstmate connected" : "Firstmate offline, retrying";
+      }
+      statusEl.setAttribute("data-empty", String(!text));
+      if (statusText.textContent !== text) statusText.textContent = text;
+      if (statusDot.getAttribute("data-on") !== String(connected)) statusDot.setAttribute("data-on", String(connected));
+      const link = connected === null ? "" : connected ? "Connected to the firstmate watcher on 127.0.0.1" : "Watcher not reachable on 127.0.0.1; reconnecting";
+      statusEl.title = [view2?.message, link].filter(Boolean).join("\n");
+      statusEl.className = `wm-fm-status wm-fm-${view2?.progress ?? (connected ? "connected" : "offline")}`;
+    }
+    function progressForNote(id) {
+      if (lastSend?.noteIds.includes(id) && !statusForSend(lastSend, statuses())) return sendProgress(lastSend, [], now());
+      return noteProgress(id, statuses(), now());
+    }
+    function sectionState(annotation) {
+      const p = progressForNote(annotation.id);
+      return `${annotation.id}:${annotation.updatedAt}:${p?.progress}:${p?.message}`;
+    }
+    function refreshSections(force = false) {
+      for (const [id, entry] of sections) if (!entry.container.isConnected) sections.delete(id);
+      const signature = [...sections.values()].map((e) => sectionState(e.annotation)).join("|") + (feed?.version ?? "") + Object.keys(sentMap).length;
+      if (!force && signature === sectionSignature) return;
+      sectionSignature = signature;
+      for (const entry of sections.values()) drawSection(entry.annotation, entry.container);
+    }
+    function update() {
+      renderStatus();
+      refreshSections();
+      const view2 = currentSendView();
+      const active = view2 && !((view2.progress === "done" || view2.progress === "failed") && now() - view2.at > SETTLED_MS);
+      const working = statuses().some((s) => s.state === "assigned");
+      if (!active && !working) {
+        if (tick !== null) timers.clear(tick);
+        tick = null;
+        return;
+      }
+      if (tick === null) {
+        const loopTick = () => {
+          tick = null;
+          update();
+        };
+        tick = timers.set(loopTick, 1e3);
+      }
+    }
+    async function connectFeed() {
+      if (!request || loop || !folder) return;
+      const port = await getPort();
+      const target = folder;
+      loop = startFeed({
+        request,
+        timers,
+        url: (since) => statusFeedURL(port, target, since, client),
+        onFeed: (next) => {
+          feed = next;
+          update();
+        },
+        onConnection: (on) => {
+          if (connected === on) return;
+          connected = on;
+          renderStatus();
+        }
+      });
+    }
+    function disconnectFeed() {
+      loop?.stop();
+      loop = null;
+      feed = null;
+      connected = null;
+    }
+    async function startLiveStatus() {
+      const c = requireCtx();
+      const info = await folderOf(c.getPage());
+      folder = info.folder;
+      sentMap = await c.storage.getSetting?.(FIRSTMATE_SENT_SETTING) ?? {};
+      lastSend = (await getSends())[info.folder] ?? null;
+      const isDoc = !!info.docPath && !!colocatedFolder(info.docPath, info.root);
+      if (lastSend || isDoc) await connectFeed();
+      update();
+    }
+    const el = (container, tag, className, text) => {
+      const node = container.ownerDocument.createElement(tag);
+      if (className) node.className = className;
+      if (text !== void 0) node.textContent = text;
+      return node;
+    };
+    function drawSection(annotation, container) {
+      const root = container.getRootNode();
+      const active = root.activeElement;
+      const hadFocus = !!active && container.contains(active) && active.tagName === "TEXTAREA";
+      container.textContent = "";
+      const progress = progressForNote(annotation.id);
+      const theirs = repliesFor(annotation.id, statuses()).map((r) => ({ ...r, mine: false }));
+      const mine = captainReplies(annotation).map((r) => ({ noteId: annotation.id, author: "you", at: r.at, text: r.text, link: null, done: false, mine: true }));
+      const thread = [...theirs, ...mine].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+      const wasSent = annotation.id in sentMap;
+      if (!progress && !thread.length && !wasSent) return;
+      if (progress) {
+        const badge = el(container, "div", `wm-fm-note-state wm-fm-${progress.progress}`);
+        const label = progress.progress === "received" ? "Queued" : PROGRESS_TEXT[progress.progress];
+        const closedByReply = progress.progress === "done" && theirs.some((r) => r.done);
+        badge.textContent = `${label}${closedByReply ? "" : shownMessage(progress)}`;
+        badge.title = [progress.message, progress.at ? `Updated ${relativeTime(now() - progress.at)}` : ""].filter(Boolean).join("\n");
+        container.appendChild(badge);
+      }
+      const pageUrl = requireCtx().getPage().url;
+      const fromFile = pageUrl.startsWith("file:");
+      void Promise.all([getRoot(), getPort()]).then(([rootSegments, port]) => {
+        for (const a of container.querySelectorAll("a[data-link]")) {
+          const href = replyHref(a.dataset.link, rootSegments, port, fromFile);
+          if (href) a.href = href;
+          else a.replaceWith(el(container, "code", "wm-fm-link", a.dataset.link));
+        }
+      });
+      for (const entry of thread) {
+        const item = el(container, "div", entry.mine ? "wm-fm-reply wm-fm-mine" : "wm-fm-reply");
+        const head = el(container, "div", "wm-fm-reply-head", `${entry.author} \xB7 ${relativeTime(now() - Date.parse(entry.at))}${entry.done ? " \xB7 done" : ""}`);
+        const body = el(container, "div", "wm-note-body");
+        body.innerHTML = renderMarkdown(entry.text);
+        item.append(head, body);
+        if (entry.link) {
+          const link = el(container, "a", "wm-fm-link", "Open \u2197");
+          link.dataset.link = entry.link;
+          link.target = "_blank";
+          link.rel = "noopener";
+          item.appendChild(link);
+        }
+        container.appendChild(item);
+      }
+      if (!wasSent) return;
+      const form = el(container, "div", "wm-fm-reply-form");
+      const box = el(container, "textarea", "wm-fm-reply-box");
+      box.rows = 1;
+      box.placeholder = "Reply to firstmate\u2026";
+      box.setAttribute("aria-label", "Reply to firstmate on this note");
+      box.value = drafts.get(annotation.id) ?? "";
+      for (const type of ["keydown", "keyup", "keypress"]) box.addEventListener(type, (e) => e.stopPropagation());
+      box.addEventListener("input", () => drafts.set(annotation.id, box.value));
+      const submit = el(container, "button", "wm-btn", "Reply");
+      submit.type = "button";
+      const post = () => void reply(annotation.id, box.value);
+      submit.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        post();
+      });
+      box.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          post();
+        }
+      });
+      form.append(box, submit);
+      container.appendChild(form);
+      if (hadFocus) box.focus();
+    }
+    async function reply(noteId, text) {
+      const body = text.trim();
+      if (!body) return;
+      const c = requireCtx();
+      const existing = await c.storage.get(noteId);
+      if (!existing) return;
+      const replies = [...captainReplies(existing), { at: new Date(now()).toISOString(), text: body }];
+      drafts.delete(noteId);
+      await c.annotator.updateNote(noteId, { metadata: { ...existing.metadata, [FIRSTMATE_REPLIES_KEY]: replies } });
+      try {
+        await send();
+      } catch (err) {
+        notify(`Reply saved but not sent to firstmate: ${err instanceof Error ? err.message : err}`);
+      }
     }
     async function send() {
       const c = requireCtx();
@@ -3447,20 +3947,30 @@ ${result.url}
       const sent = await c.storage.getSetting?.(FIRSTMATE_SENT_SETTING) ?? {};
       const pending = unsentNotes(await c.storage.getPage(page), sent);
       if (!pending.length) return { sent: 0, path: null };
-      const root = await getRoot();
+      const { folder: target, root } = await folderOf(page);
       const reloadPort = await getPort();
-      const folder = folderFor(page.url, root, localPathOf(page.url));
       const at = now();
-      const path = `${folder}/${firstmateFilename(at)}`;
+      const filename = firstmateFilename(at);
+      const path = `${target}/${filename}`;
       await options.save(
         FIRSTMATE_CONFIG_FILENAME,
         JSON.stringify({ format: "wm-annotate-firstmate-config", root: root.join("/"), reloadPort }, null, 2) + "\n",
         { overwrite: true }
       );
-      await options.save(path, JSON.stringify(buildFirstmatePayload(page, pending, at, folder), null, 2), {
+      await options.save(path, JSON.stringify(buildFirstmatePayload(page, pending, at, target), null, 2), {
         overwrite: false
       });
-      await c.storage.setSetting?.(FIRSTMATE_SENT_SETTING, markSent(sent, pending));
+      sentMap = markSent(sent, pending);
+      await c.storage.setSetting?.(FIRSTMATE_SENT_SETTING, sentMap);
+      const record = { source: filename, sentAt: at, noteIds: pending.map((n) => n.id) };
+      await c.storage.setSetting?.(FIRSTMATE_SENDS_SETTING, { ...await getSends(), [target]: record });
+      if (target === folder) {
+        lastSend = record;
+        await connectFeed();
+        update();
+        refreshSections(true);
+        timers.set(update, NO_RECEIPT_MS + 50);
+      }
       return { sent: pending.length, path };
     }
     async function configureRoot() {
@@ -3493,11 +4003,12 @@ ${result.url}
       }
     }
     const run = () => {
-      void send().then(
-        (result) => notify(
-          result.path ? `Sent ${result.sent} note${result.sent === 1 ? "" : "s"} to firstmate: Downloads/${result.path}` : "No new or edited notes on this page to send to firstmate."
-        )
-      ).catch((err) => notify(`Send to firstmate failed: ${err instanceof Error ? err.message : err}`));
+      void send().then((result) => {
+        if (!result.path) notify("No new or edited notes on this page to send to firstmate.");
+        else if (!statusEl || !request) {
+          notify(`Sent ${result.sent} note${result.sent === 1 ? "" : "s"} to firstmate: Downloads/${result.path}`);
+        }
+      }).catch((err) => notify(`Send to firstmate failed: ${err instanceof Error ? err.message : err}`));
     };
     const plugin = {
       name: "firstmate",
@@ -3522,7 +4033,29 @@ ${result.url}
             }
           })
         );
+        if (statusEl) cleanups.push(pluginCtx.addStatusItem(statusEl));
+        cleanups.push(
+          pluginCtx.addNoteSection({
+            id: "firstmate",
+            render: (annotation, container) => {
+              sections.set(annotation.id, { annotation, container });
+              drawSection(annotation, container);
+            }
+          })
+        );
+        cleanups.push(
+          pluginCtx.on("page:change", () => {
+            disconnectFeed();
+            lastSend = null;
+            void startLiveStatus().catch((err) => console.warn("[webmods-annotate] firstmate status not started", err));
+          })
+        );
+        cleanups.push(() => {
+          disconnectFeed();
+          if (tick !== null) timers.clear(tick);
+        });
         void startLiveReload().catch((err) => console.warn("[webmods-annotate] live reload not started", err));
+        void startLiveStatus().catch((err) => console.warn("[webmods-annotate] firstmate status not started", err));
       },
       destroy() {
         for (const off of cleanups.splice(0)) off();
@@ -3537,7 +4070,7 @@ ${result.url}
   var MAX_PAGE_CHARS = 12e3;
   var MAX_TARGET_CHARS = 4e3;
   var MAX_SURROUNDING_CHARS = 1e3;
-  var CSS4 = `
+  var CSS5 = `
 .wm-chat { display: flex; flex-direction: column; height: 100%; gap: 8px; }
 .wm-chat-scope { display: flex; flex-direction: column; gap: 6px; }
 .wm-chat-scope select {
@@ -3732,7 +4265,7 @@ ${result.url}
             label: "Chat",
             render(container) {
               const style = document.createElement("style");
-              style.textContent = CSS4;
+              style.textContent = CSS5;
               container.appendChild(style);
               const root = document.createElement("div");
               root.className = "wm-chat";

@@ -27,9 +27,29 @@ declare function GM_xmlhttpRequest(details: {
   url: string;
   headers?: Record<string, string>;
   data?: string;
+  timeout?: number;
   onload(response: GMResponse): void;
   onerror(error: unknown): void;
+  ontimeout?(): void;
 }): void;
+
+/**
+ * GET for the firstmate status feed on 127.0.0.1. An https page cannot reach
+ * loopback with fetch (Chrome's Local Network Access), GM_xmlhttpRequest can.
+ * The server holds a poll for 25 s, so the timeout sits above that.
+ */
+function gmFeedRequest(url: string): Promise<{ status: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    GM_xmlhttpRequest({
+      method: "GET",
+      url,
+      timeout: 40_000,
+      onload: (response) => resolve({ status: response.status, text: response.responseText }),
+      onerror: () => reject(new Error("status feed unreachable")),
+      ontimeout: () => reject(new Error("status feed timed out")),
+    });
+  });
+}
 
 /**
  * fetch over GM_xmlhttpRequest. A page CSP (Notion, GitHub) blocks a direct
@@ -154,7 +174,9 @@ export function startUserscript(): void {
   annotator.use(createGlobalBrowserPlugin());
   const gist = createGistPlugin({ fetchFn: typeof GM_xmlhttpRequest === "function" ? gmFetch : undefined });
   annotator.use(gist);
-  annotator.use(createFirstmatePlugin({ save: gmSave }));
+  annotator.use(
+    createFirstmatePlugin({ save: gmSave, request: typeof GM_xmlhttpRequest === "function" ? gmFeedRequest : undefined })
+  );
 
   // The Chat tab only exists once an API key is configured; nothing is ever
   // sent anywhere until the user presses Send.

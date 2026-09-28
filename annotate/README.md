@@ -67,7 +67,7 @@ Browser global:
 
 ## Send to firstmate
 
-Annotate any page the way Lavish Editor let you annotate its served page, then hand the notes to a firstmate agent. There is no server and no port. The userscript writes a JSON file into a per-URL folder under the browser's Downloads folder, and a watcher turns each file into a firstmate inbox note.
+Annotate any page the way Lavish Editor let you annotate its served page, then hand the notes to a firstmate agent. Sending needs no server: the userscript writes a JSON file into a per-URL folder under the browser's Downloads folder, and a watcher turns each file into a firstmate inbox note. The watcher's [127.0.0.1 server](#127001-server) then reports progress and firstmate's replies back to the page.
 
 1. Open any `http(s)://` or `file://` page and annotate it.
 2. Run **Send to firstmate** from the Tampermonkey menu or the sidebar's **Firstmate** dropdown.
@@ -75,12 +75,14 @@ Annotate any page the way Lavish Editor let you annotate its served page, then h
 4. It saves them as `Downloads/<root>/<host>/<path-slug>/firstmate-annotate-<timestamp>.json`. The timestamp is ISO 8601 basic format without colons (`20260928T032053.123Z`).
 5. Once Tampermonkey reports the file written, those note versions are recorded as sent (setting `firstmate.sent`, `{ noteId: updatedAt }`). A failed or cancelled download leaves them unsent.
 6. The watcher delivers the file as one firstmate note naming the per-URL folder, then moves it to `processed/` in that folder.
+7. The page shows the send's progress and firstmate's replies live, see [Feedback on the page](#feedback-on-the-page). A dialog appears only when there was nothing to send or the send failed.
 
 ### Tampermonkey setup
 
 - **Download mode: Browser API.** In the Tampermonkey dashboard's Settings tab, set Config mode to Advanced, then set Download Mode to "Browser API" and grant the downloads permission. Send refuses to run in any other mode rather than save to the wrong place.
 - **Tampermonkey 5.4.6227 or later.** The script passes the file to `GM_download` as a Blob, which needs 5.4.6226+. 5.4.6226 itself turned `/` into `_`, and 5.4.6227 fixed it ([#2413](https://github.com/Tampermonkey/tampermonkey/issues/2413)).
 - **`.json` downloads allowed.** `GM_download` only saves file extensions whitelisted on Tampermonkey's options page. A missing `.json` fails the send with `not_whitelisted`.
+- **Grants for the dev loader.** The script uses `@grant GM_xmlhttpRequest` with `@connect 127.0.0.1` and `@connect localhost` to read the status feed, next to `@connect api.github.com` for gists. A dev loader must copy all three `@connect` lines, or Tampermonkey blocks the feed and the page stays on "offline".
 - **Allow access to file URLs** for `file://` pages: in `chrome://extensions`, open Tampermonkey's details and turn it on. Without it the userscript does not run on local files at all.
 
 ### Why the folder is under Downloads
@@ -116,6 +118,7 @@ A plain HTML page can live inside the root, for example `Downloads/firstmate-ann
 - **Notes land next to the doc.** For a `file://` page inside `<root>`, the send goes to the doc's own folder (`firstmate-annotate/docs/plan/`) rather than `file/<slug>`.
 - **The note names the file to edit.** The payload's `page.localPath` carries the doc's absolute path.
 - **Fallback:** a doc outside the root, directly in the root, or under a folder whose name is not already clean (for example `My Plan/`) falls back to `<root>/file/<path-slug>`.
+- **Served copy:** the same doc opened as `http://127.0.0.1:<port>/doc/docs/plan/doc.html` (a reply link) sends to the same folder. It is a different URL, so its notes are separate from the `file://` copy's. A script or stylesheet the doc loads by absolute file path does not load there; paths relative to the doc do.
 
 ### Watcher
 
@@ -180,6 +183,33 @@ How firstmate writes it by hand:
 
 A note's state on the page is the state of the newest status that carries it in `noteIds`, except that a reply with `done: true` newer than that send marks it done.
 
+### Feedback on the page
+
+The Firstmate plugin reads the status feed and shows three things. All of them come from the status files above, so a page opened later, or reloaded, shows the same.
+
+- **Send indicator.** A one-line status under the sidebar header, or a small pill at the bottom left while the sidebar is closed. For the last send from this page it walks:
+  - `Sent, waiting for the watcher`, then `No receipt after 10 s. Is the watcher running?` if no status file appears within 10 s.
+  - `Received, waiting for an agent` (the watcher's message, with the inbox id, is in the tooltip).
+  - `Being worked on: <message>` while the status is `assigned`, or `No update for over 10 min` once its `at` is more than 10 minutes old.
+  - `Done: <message>` or `Failed: <message>`. The pill hides 10 s after the send finished; the sidebar line stays.
+  The last send per folder is kept in the setting `firstmate.sends` (`{ [folder]: { source, sentAt, noteIds } }`), so the indicator survives a reload.
+- **Connection dot.** Green while the page holds a poll to the server, a red ring while it cannot reach it. After a failure the page retries after 0.5, 1, 2 and 4 s, then every 5 s. The first poll after an outage carries no version, so a restarted watcher answers it at once instead of holding it.
+- **Note threads.** Each sent note's card shows its state as a badge, firstmate's replies (Markdown, with an **Open ↗** link when the reply has one), and a reply box. A reply is stored on the note (metadata `firstmateReplies`, `[{ at, text }]`), which counts as an edit, and goes out at once through the normal send path. The payload carries it in the note's `replies`, the watcher renders it under "Captain's replies" in the inbox note, and the note shows `Sent` again until firstmate picks it up. Ctrl or Cmd+Enter sends from the box.
+
+**When a page connects.** Only when it has something to show: a `file://` doc under the root, a doc served from `/doc/`, or a page this browser sent from before (it has a `firstmate.sends` entry). Other pages make no request until their first send. The page id in `client=` is random per page load.
+
+**Reply links.** A link to a path or `file://` URL under the root opens as `http://127.0.0.1:<port>/doc/<path>`. An https page cannot open a `file://` link ("Not allowed to load local resource"), but it can open this one: a plain click on a link is navigation, which Local Network Access does not block. `http(s)` links are used as they are. Any other link is shown as text, except a `file://` link on a `file://` page, which the browser allows.
+
+Verified in headless Chrome 153 (2026-09-28) against the real watcher and server with a stub `fm-inbox.sh`, the library loaded as page script:
+
+- A `file://` doc under the root connected with no send, walked `received`, `assigned` and a done reply live, and kept all of it across a reload. `/presence` listed it.
+- A reply typed in the note's box reached `fm-inbox.sh` 149 ms after the drop file was written, with the reply under "Captain's replies".
+- Watcher killed: the dot turned red 183 ms later. Watcher restarted: green again 328 ms after it started.
+- Browser closed: the folder left `/presence` within the 5 s grace. Reopened: the page reconnected at once. The headless profile does not keep localStorage across a restart, so this run could not show the notes surviving it; in Tampermonkey they live in GM storage.
+- On `https://example.com`, clicking a reply's **Open ↗** opened `http://127.0.0.1:4827/doc/docs/plan.html` in a new tab and the doc loaded.
+
+Not verified: `GM_xmlhttpRequest` itself, since the headless browser has no Tampermonkey. On the https page the feed came from an in-page stand-in, so only the link and the rendering were real there.
+
 ### 127.0.0.1 server
 
 The watcher starts it on `--port` unless you pass `--once` or `--no-reload`. It is `bin/firstmate-reload-server.mjs` and binds to `127.0.0.1` only. The page always opens the connection: the server cannot dial into a browser.
@@ -236,6 +266,7 @@ Verified in headless Chrome 153 (2026-09-28), from page script rather than from 
         "suffix": "text after" | null
       },
       "body": "Markdown note text",
+      "replies": [{ "at": "2026-09-28T03:15:00.000Z", "text": "Also the outro" }], // the captain's thread replies, oldest first
       "createdAt": "2026-09-28T03:00:00.000Z",
       "updatedAt": "2026-09-28T03:10:00.000Z"
     }

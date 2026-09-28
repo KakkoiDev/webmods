@@ -1,6 +1,6 @@
 import { UI_ATTR } from "./blocks";
 import { renderMarkdown } from "./markdown";
-import type { Annotation, HeaderAction, HeaderActionItem, NoteAction, ResolvedNote, SidebarTab } from "./types";
+import type { Annotation, HeaderAction, HeaderActionItem, NoteAction, NoteSection, ResolvedNote, SidebarTab } from "./types";
 
 const CSS = `
 :host { all: initial; }
@@ -150,6 +150,16 @@ button.wm-switch[aria-checked="true"] { background: #6366f1; }
 button.wm-switch[aria-checked="true"]::after { left: 17px; }
 button.wm-switch:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
 button.wm-corner-sidebar { width: 100%; }
+.wm-status:empty { display: none; }
+.wm-status-docked { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: #57606a; }
+.wm-status-float {
+  position: fixed; bottom: 14px; left: 14px; pointer-events: auto; display: flex; flex-direction: column; gap: 3px;
+  max-width: 320px; font-size: 12px; color: #1f2328; background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+  padding: 6px 10px; box-shadow: 0 6px 20px rgba(31,35,40,0.16);
+}
+.wm-status-float > [data-quiet="true"] { display: none; }
+.wm-status-float:not(:has(> :not([data-quiet="true"]))) { display: none; }
+.wm-note-section:empty { display: none; }
 .wm-mode-pill {
   position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
   pointer-events: none; background: #1f2328; color: #fff; font-size: 12px; font-weight: 600;
@@ -209,6 +219,8 @@ export class AnnotatorUI {
   private noteActions: NoteAction[] = [];
   private headerActions: HeaderAction[] = [];
   private headerActionsEl: HTMLElement;
+  private noteSections: NoteSection[] = [];
+  private statusHost: HTMLElement;
   private activeTab = "notes";
   private tabCleanup: (() => void) | null = null;
   private notes: ResolvedNote[] = [];
@@ -266,6 +278,10 @@ export class AnnotatorUI {
     this.sidebarBody.className = "wm-sidebar-body";
     this.sidebar.appendChild(this.sidebarBody);
     this.layer.appendChild(this.sidebar);
+    this.statusHost = doc.createElement("div");
+    this.statusHost.className = "wm-status wm-status-float";
+    this.statusHost.setAttribute("role", "status");
+    this.layer.appendChild(this.statusHost);
 
     if (options.cornerWidget) this.buildCornerWidget();
 
@@ -658,7 +674,23 @@ export class AnnotatorUI {
 
   closeSidebar(): void {
     this.sidebar.classList.remove("wm-open");
+    this.statusHost.className = "wm-status wm-status-float";
+    this.layer.appendChild(this.statusHost);
     this.positionCorner();
+  }
+
+  addStatusItem(el: HTMLElement): () => void {
+    this.statusHost.appendChild(el);
+    return () => el.remove();
+  }
+
+  addNoteSection(section: NoteSection): () => void {
+    this.noteSections.push(section);
+    this.renderNotesTab();
+    return () => {
+      this.noteSections = this.noteSections.filter((s) => s !== section);
+      this.renderNotesTab();
+    };
   }
 
   /** Open the sidebar on the Notes tab with one note's card scrolled into view and emphasized. */
@@ -743,6 +775,8 @@ export class AnnotatorUI {
     modeGroup.append(modeLabel, modeSwitch);
     toolRow.append(modeGroup, this.headerActionsEl);
     this.renderHeaderActions();
+    this.statusHost.className = "wm-status wm-status-docked";
+    this.tabBar.appendChild(this.statusHost);
   }
 
   addHeaderAction(action: HeaderAction): () => void {
@@ -935,6 +969,16 @@ export class AnnotatorUI {
       }
     }
 
+    if (!archivedCard) {
+      for (const section of this.noteSections) {
+        const container = this.doc.createElement("div");
+        container.className = "wm-note-section";
+        container.dataset.sectionId = section.id;
+        section.render(note.annotation, container);
+        card.appendChild(container);
+      }
+    }
+
     const actions = this.doc.createElement("div");
     actions.className = "wm-note-actions";
     const id = note.annotation.id;
@@ -960,10 +1004,12 @@ export class AnnotatorUI {
       if (!detached && !archivedCard) this.noteCallbacks.onNavigate(id);
     };
     card.addEventListener("click", (e) => {
-      if ((e.target as Element).closest("button")) return;
+      if ((e.target as Element).closest("button, a, textarea, input")) return;
       navigate();
     });
     card.addEventListener("keydown", (e) => {
+      // Keys typed in a section's text field belong to that field.
+      if (e.target !== card) return;
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         navigate();

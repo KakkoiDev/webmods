@@ -56,6 +56,7 @@ function attach(opts: { failSave?: boolean; now?: number; answers?: Array<string
     notify: (m) => notices.push(m),
     prompt: () => (answers.length ? answers.shift()! : null),
     now: () => opts.now ?? Date.UTC(2026, 8, 28, 3, 20, 53, 123),
+    request: false,
   });
   const ctx = {
     annotator: {} as any,
@@ -65,6 +66,8 @@ function attach(opts: { failSave?: boolean; now?: number; answers?: Array<string
     addSidebarTab: () => () => {},
     addNoteAction: () => () => {},
     addHeaderAction: (a: HeaderAction) => (headerActions.push(a), () => {}),
+    addNoteSection: () => () => {},
+    addStatusItem: () => () => {},
     activateSidebarTab: () => {},
     getPage: () => opts.page ?? docPage,
     getNotes: () => [],
@@ -116,6 +119,7 @@ describe("firstmate serializer", () => {
           id: "a",
           anchor: { kind: "range", selector: null, quote: "picked", prefix: null, suffix: null },
           body: "body a",
+          replies: [],
           createdAt: "1970-01-01T00:00:01.000Z",
           updatedAt: "1970-01-01T00:00:02.000Z",
         },
@@ -123,6 +127,7 @@ describe("firstmate serializer", () => {
           id: "b",
           anchor: { kind: "block", selector: "#b", quote: "quote b", prefix: "pre", suffix: "suf" },
           body: "body b",
+          replies: [],
           createdAt: "1970-01-01T00:00:03.000Z",
           updatedAt: "1970-01-01T00:00:03.000Z",
         },
@@ -196,6 +201,13 @@ describe("firstmate plugin", () => {
     expect(JSON.parse(saved[0].text).root).toBe("fm/inbox");
   });
 
+  it("files a served doc's notes next to the doc, like its file:// copy", async () => {
+    const served: PageIdentity = { id: "pg_served", url: "http://127.0.0.1:4817/doc/docs/plan.html", normalizedUrl: "http://127.0.0.1:4817/doc/docs/plan.html" };
+    const { plugin, storage } = attach({ page: served });
+    await storage.save({ ...note("n1"), pageId: served.id }, served);
+    expect((await plugin.send()).path).toBe("firstmate-annotate/docs/firstmate-annotate-20260928T032053.123Z.json");
+  });
+
   it("leaves notes unsent when the save fails", async () => {
     const { plugin, storage } = attach({ failSave: true });
     await storage.save(note("n1"), docPage);
@@ -240,6 +252,7 @@ describe("live reload", () => {
     let reloads = 0;
     const plugin = createFirstmatePlugin({
       save: async () => {},
+      request: false,
       liveReload: {
         connect: (u) => {
           connected.push(u);
@@ -257,6 +270,8 @@ describe("live reload", () => {
       addSidebarTab: () => () => {},
       addNoteAction: () => () => {},
       addHeaderAction: () => () => {},
+      addNoteSection: () => () => {},
+      addStatusItem: () => () => {},
       activateSidebarTab: () => {},
       getPage: () => page,
       getNotes: () => [],
@@ -289,6 +304,11 @@ describe("live reload", () => {
       [FIRSTMATE_ROOT_SETTING]: "team/notes",
     });
     expect(lr.connected).toEqual([reloadEventsURL(5000, "/d/team/notes/x/doc.html")]);
+  });
+
+  it("subscribes a doc served from 127.0.0.1 by its path under the root", async () => {
+    const lr = await setupFor("http://127.0.0.1:4817/doc/docs/plan%20v2.html");
+    expect(lr.connected).toEqual(["http://127.0.0.1:4817/events?doc=docs%2Fplan%20v2.html"]);
   });
 
   it("does not subscribe web pages or local files outside the root", async () => {

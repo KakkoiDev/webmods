@@ -199,6 +199,13 @@ export interface NoteAction {
   onClick(annotation: Annotation): void;
 }
 
+/** Extra content plugins can render inside every note card, above its buttons. */
+export interface NoteSection {
+  id: string;
+  /** Called each time the card is built; `container` is empty and belongs to this section. */
+  render(annotation: Annotation, container: HTMLElement): void;
+}
+
 export interface PluginContext {
   annotator: Annotator;
   storage: AnnotationStorage;
@@ -207,6 +214,13 @@ export interface PluginContext {
   addSidebarTab(tab: SidebarTab): () => void;
   addNoteAction(action: NoteAction): () => void;
   addHeaderAction(action: HeaderAction): () => void;
+  addNoteSection(section: NoteSection): () => void;
+  /**
+   * Show `el` in a status row under the sidebar header, or in a small floating
+   * pill while the sidebar is closed. Mark it `data-quiet="true"` to keep it out
+   * of the floating pill.
+   */
+  addStatusItem(el: HTMLElement): () => void;
   /** Open the sidebar on a specific tab (e.g. one this plugin registered). */
   activateSidebarTab(id: string): void;
   getPage(): PageIdentity;

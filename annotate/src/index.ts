@@ -29,11 +29,43 @@ export {
   DEFAULT_RELOAD_PORT,
   parsePort,
   reloadEventsURL,
+  statusFeedURL,
+  captainReplies,
+  FIRSTMATE_SENDS_SETTING,
+  FIRSTMATE_REPLIES_KEY,
 } from "./plugins/firstmate";
+export {
+  progressOf,
+  sendProgress,
+  statusForSend,
+  noteProgress,
+  repliesFor,
+  replyHref,
+  pathUnderRoot,
+  startFeed,
+  backoffMs,
+  STATUS_FORMAT,
+  STALE_AFTER_MS,
+  NO_RECEIPT_MS,
+  BACKOFF_MAX_MS,
+} from "./plugins/firstmate-feed";
+export type {
+  FirstmateStatus,
+  FirstmateReply,
+  FirstmateFeed,
+  LocalSend,
+  Progress,
+  ProgressView,
+  FeedRequest,
+  FeedResponse,
+  Timers,
+} from "./plugins/firstmate-feed";
 export {
   folderFor,
   urlSegments,
   colocatedFolder,
+  servedDocRel,
+  docPathOf,
   parseRoot,
   sanitizeSegment,
   DEFAULT_ROOT,
@@ -42,7 +74,7 @@ export {
   SLUG_MAX,
   FOLDER_MAX,
 } from "./url-folder";
-export type { ReloadSource, FirstmatePlugin, FirstmatePluginOptions, FirstmatePayload, FirstmateNote, FirstmateSendResult } from "./plugins/firstmate";
+export type { CaptainReply, ReloadSource, FirstmatePlugin, FirstmatePluginOptions, FirstmatePayload, FirstmateNote, FirstmateSendResult } from "./plugins/firstmate";
 export { collectPages, filterPagesByScope, exportFilename } from "./plugins/portable-data";
 export type { PageGroup, ExportScope, ExportOptions } from "./plugins/portable-data";
 export { download, copyText } from "./dom-utils";

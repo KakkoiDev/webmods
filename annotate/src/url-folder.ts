@@ -99,6 +99,39 @@ export function colocatedFolder(localPath: string, root: string[]): string[] | n
   return null;
 }
 
+/**
+ * For a doc the watcher's server serves (`http://127.0.0.1:<port>/doc/<path>`),
+ * its path under the root; null for any other URL.
+ */
+export function servedDocRel(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(parsed.hostname)) return null;
+  if (!parsed.pathname.startsWith("/doc/")) return null;
+  const rel = safeDecode(parsed.pathname.slice("/doc/".length));
+  return rel && !rel.split("/").some((s) => s === "." || s === "..") ? rel : null;
+}
+
+/**
+ * The path a page's notes are filed under: its own file path for a file:// page,
+ * `/<root>/<path>` for a served doc, else null. colocatedFolder takes it from there.
+ */
+export function docPathOf(url: string, root: string[]): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol === "file:") return safeDecode(parsed.pathname);
+  const rel = servedDocRel(url);
+  return rel ? `/${[...root, rel].join("/")}` : null;
+}
+
 /** Folder, relative to the Downloads folder, that a send from `url` lands in. */
 export function folderFor(url: string, root: string[], localPath: string | null = null): string {
   const colocated = localPath ? colocatedFolder(localPath, root) : null;
