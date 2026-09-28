@@ -81,7 +81,19 @@ function buildProvider(kind: string | undefined, apiKey: string, model?: string,
   return createClaudeProvider({ apiKey, model });
 }
 
+const DEBUG = true;
+
 export function startUserscript(): void {
+  if (DEBUG) {
+    console.log("[wm-annotate] file executing", {
+      version: "2026.08.18.9",
+      url: location.href,
+      grants: ["GM_getValue", "GM_setValue", "GM_registerMenuCommand", "GM_setClipboard", "GM_xmlhttpRequest"]
+        .map((n) => `${n}=${typeof (globalThis as Record<string, unknown>)[n]}`)
+        .join(" "),
+    });
+    window.addEventListener("error", (e) => console.log("[wm-annotate] window error", e.message));
+  }
   const storage = createTampermonkeyStorage();
   const annotator = createAnnotator({ storage });
 
@@ -167,4 +179,9 @@ export function startUserscript(): void {
   }
 
   (globalThis as Record<string, any>).__wmAnnotate = annotator;
+  if (DEBUG) {
+    console.log("[wm-annotate] startUserscript finished", {
+      uiHosts: document.querySelectorAll("[data-wm-annotate-ui]").length,
+    });
+  }
 }

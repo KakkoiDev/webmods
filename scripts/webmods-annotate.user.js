@@ -2,7 +2,7 @@
 // @name         Webmods Annotate
 // @namespace    http://tampermonkey.net/
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM2MzY2ZjEiLz48dGV4dCB4PSIzMiIgeT0iNDIiIGZvbnQtc2l6ZT0iMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuKcj++4jzwvdGV4dD48L3N2Zz4=
-// @version      2026.08.18.9
+// @version      2026.09.28
 // @description  Annotate any web page with Markdown notes - robust anchors, cross-site Tampermonkey storage, notes sidebar, shareable note links, JSON export/import (Alt+Shift+A)
 // @author       KakkoiDev
 // @match        *://*/*
@@ -724,9 +724,9 @@
     return ((h2 >>> 0).toString(36) + (h1 >>> 0).toString(36)).padStart(13, "0");
   }
   function createDefaultPageIdentityResolver(extraStripParams = []) {
-    return (location, document2) => {
-      const cleanHash = stripOwnFragment(location.hash);
-      const url = `${location.origin}${location.pathname}${location.search}${cleanHash}`;
+    return (location2, document2) => {
+      const cleanHash = stripOwnFragment(location2.hash);
+      const url = `${location2.origin}${location2.pathname}${location2.search}${cleanHash}`;
       const normalizedUrl = normalizeUrl(url, extraStripParams);
       return {
         id: `pg_${hashString(normalizedUrl)}`,
@@ -3751,7 +3751,16 @@ ${result.url}
     if (kind === "openai") return createOpenAIProvider({ apiKey, model, baseURL });
     return createClaudeProvider({ apiKey, model });
   }
+  var DEBUG = true;
   function startUserscript() {
+    if (DEBUG) {
+      console.log("[wm-annotate] file executing", {
+        version: "2026.08.18.9",
+        url: location.href,
+        grants: ["GM_getValue", "GM_setValue", "GM_registerMenuCommand", "GM_setClipboard", "GM_xmlhttpRequest"].map((n) => `${n}=${typeof globalThis[n]}`).join(" ")
+      });
+      window.addEventListener("error", (e) => console.log("[wm-annotate] window error", e.message));
+    }
     const storage = createTampermonkeyStorage();
     const annotator = createAnnotator({ storage });
     const portable = createPortableDataPlugin();
@@ -3824,6 +3833,11 @@ ${result.url}
       });
     }
     globalThis.__wmAnnotate = annotator;
+    if (DEBUG) {
+      console.log("[wm-annotate] startUserscript finished", {
+        uiHosts: document.querySelectorAll("[data-wm-annotate-ui]").length
+      });
+    }
   }
 
   // src/userscript-main.ts
