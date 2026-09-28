@@ -54,6 +54,46 @@ function gmFetch(input: URL | RequestInfo, init: RequestInit = {}): Promise<Resp
   });
 }
 
+declare function GM_download(details: {
+  url: string | Blob;
+  name: string;
+  saveAs?: boolean;
+  conflictAction?: "uniquify" | "overwrite" | "prompt";
+  onload?(): void;
+  onerror?(error: { error?: string; details?: unknown }): void;
+  ontimeout?(): void;
+}): void;
+
+declare const GM_info: { downloadMode?: string } | undefined;
+
+/**
+ * Save under the Downloads folder with GM_download. Subfolders in `name` are
+ * only honored in Tampermonkey's "Browser API" download mode; the native mode
+ * flattens "a/b.json" into "a_b.json", which the watcher would never find.
+ */
+function gmSave(path: string, text: string, { overwrite }: { overwrite: boolean }): Promise<void> {
+  const mode = typeof GM_info === "object" ? GM_info?.downloadMode : undefined;
+  if (typeof GM_download !== "function" || mode !== "browser") {
+    return Promise.reject(
+      new Error(
+        `Tampermonkey download mode is "${mode ?? "unavailable"}". In the Tampermonkey dashboard's Settings tab, set ` +
+          'Config mode to Advanced, then Download Mode to "Browser API", and allow the downloads permission.'
+      )
+    );
+  }
+  return new Promise((resolve, reject) => {
+    GM_download({
+      url: new Blob([text], { type: "application/json" }),
+      name: path,
+      saveAs: false,
+      conflictAction: overwrite ? "overwrite" : "uniquify",
+      onload: () => resolve(),
+      onerror: (e) => reject(new Error(`download ${e?.error ?? "failed"}${e?.details ? `: ${JSON.stringify(e.details)}` : ""}`)),
+      ontimeout: () => reject(new Error("download timed out")),
+    });
+  });
+}
+
 function pickFile(accept: string): Promise<string | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
@@ -106,7 +146,7 @@ export function startUserscript(): void {
   annotator.use(createGlobalBrowserPlugin());
   const gist = createGistPlugin({ fetchFn: typeof GM_xmlhttpRequest === "function" ? gmFetch : undefined });
   annotator.use(gist);
-  annotator.use(createFirstmatePlugin());
+  annotator.use(createFirstmatePlugin({ save: gmSave }));
 
   // The Chat tab only exists once an API key is configured; nothing is ever
   // sent anywhere until the user presses Send.
@@ -132,6 +172,7 @@ export function startUserscript(): void {
     GM_registerMenuCommand("Upload this site to a secret gist", () => void annotator.commands.execute("gist.upload", "site"));
     GM_registerMenuCommand("Upload all sites to a secret gist", () => void annotator.commands.execute("gist.upload", "all"));
     GM_registerMenuCommand("Send to firstmate", () => annotator.commands.execute("firstmate.send"));
+    GM_registerMenuCommand("Set firstmate folder…", () => annotator.commands.execute("firstmate.configure-root"));
     GM_registerMenuCommand("Configure AI chat…", async () => {
       const currentKind = (await storage.getSetting<string>(CHAT_PROVIDER_SETTING)) ?? "anthropic";
       const kindInput = prompt(

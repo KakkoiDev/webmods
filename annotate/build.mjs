@@ -82,12 +82,14 @@ const header = `// ==UserScript==
 // @description  Annotate any web page with Markdown notes - robust anchors, cross-site Tampermonkey storage, notes sidebar, shareable note links, JSON export/import (Alt+Shift+A)
 // @author       KakkoiDev
 // @match        *://*/*
+// @match        file:///*
 // @noframes
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
+// @grant        GM_download
 // @connect      api.github.com
 // @license      MIT
 // @updateURL    https://raw.githubusercontent.com/KakkoiDev/webmods/main/scripts/webmods-annotate.user.js

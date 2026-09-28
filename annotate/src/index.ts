@@ -23,7 +23,21 @@ export {
   FIRSTMATE_FORMAT,
   FIRSTMATE_SCHEMA_VERSION,
   FIRSTMATE_SENT_SETTING,
+  FIRSTMATE_ROOT_SETTING,
+  FIRSTMATE_CONFIG_FILENAME,
 } from "./plugins/firstmate";
+export {
+  folderFor,
+  urlSegments,
+  colocatedFolder,
+  parseRoot,
+  sanitizeSegment,
+  DEFAULT_ROOT,
+  ROOT_MAX,
+  HOST_MAX,
+  SLUG_MAX,
+  FOLDER_MAX,
+} from "./url-folder";
 export type { FirstmatePlugin, FirstmatePluginOptions, FirstmatePayload, FirstmateNote, FirstmateSendResult } from "./plugins/firstmate";
 export { collectPages, filterPagesByScope, exportFilename } from "./plugins/portable-data";
 export type { PageGroup, ExportScope, ExportOptions } from "./plugins/portable-data";

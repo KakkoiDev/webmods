@@ -23,16 +23,23 @@ var WebmodsAnnotate = (() => {
   var index_exports = {};
   __export(index_exports, {
     ARCHIVED_KEY: () => ARCHIVED_KEY,
+    DEFAULT_ROOT: () => DEFAULT_ROOT,
     DocumentStorage: () => DocumentStorage,
+    FIRSTMATE_CONFIG_FILENAME: () => FIRSTMATE_CONFIG_FILENAME,
     FIRSTMATE_FORMAT: () => FIRSTMATE_FORMAT,
+    FIRSTMATE_ROOT_SETTING: () => FIRSTMATE_ROOT_SETTING,
     FIRSTMATE_SCHEMA_VERSION: () => FIRSTMATE_SCHEMA_VERSION,
     FIRSTMATE_SENT_SETTING: () => FIRSTMATE_SENT_SETTING,
+    FOLDER_MAX: () => FOLDER_MAX,
     GIST_FILENAME: () => GIST_FILENAME,
     GIST_TOKEN_SETTING: () => GIST_TOKEN_SETTING,
     GIST_URL_SETTING: () => GIST_URL_SETTING,
+    HOST_MAX: () => HOST_MAX,
     INLINE_FRAGMENT_PARAM: () => INLINE_FRAGMENT_PARAM,
     NOTE_FRAGMENT_PARAM: () => NOTE_FRAGMENT_PARAM,
+    ROOT_MAX: () => ROOT_MAX,
     SCHEMA_VERSION: () => SCHEMA_VERSION,
+    SLUG_MAX: () => SLUG_MAX,
     archivedAt: () => archivedAt,
     blockTextWithMap: () => blockTextWithMap,
     buildExcludeFn: () => buildExcludeFn,
@@ -42,6 +49,7 @@ var WebmodsAnnotate = (() => {
     buildSystemPrompt: () => buildSystemPrompt,
     buildXPath: () => buildXPath,
     collectPages: () => collectPages,
+    colocatedFolder: () => colocatedFolder,
     copyText: () => copyText,
     create: () => createAnnotator,
     createAnchor: () => createAnchor,
@@ -68,6 +76,7 @@ var WebmodsAnnotate = (() => {
     exportFilename: () => exportFilename,
     filterPagesByScope: () => filterPagesByScope,
     firstmateFilename: () => firstmateFilename,
+    folderFor: () => folderFor,
     generateId: () => generateId,
     hashString: () => hashString,
     indexedDBStorage: () => createIndexedDBStorage,
@@ -82,17 +91,20 @@ var WebmodsAnnotate = (() => {
     normalizeUrl: () => normalizeUrl,
     noteLink: () => noteLink,
     parseGistId: () => parseGistId,
+    parseRoot: () => parseRoot,
     parseSSE: () => parseSSE,
     rangeOffsets: () => rangeOffsets,
     renderMarkdown: () => renderMarkdown,
     resolveAnchor: () => resolveAnchor,
     resolveRangeInBlock: () => resolveRangeInBlock,
+    sanitizeSegment: () => sanitizeSegment,
     scoreBlock: () => scoreBlock,
     searchAnnotations: () => searchAnnotations,
     stripOwnFragment: () => stripOwnFragment,
     tampermonkeyStorage: () => createTampermonkeyStorage,
     textSimilarity: () => textSimilarity,
     unsentNotes: () => unsentNotes,
+    urlSegments: () => urlSegments,
     validateAnnotation: () => validateAnnotation,
     validateExportDocument: () => validateExportDocument
   });
@@ -3227,8 +3239,82 @@ ${result.url}
     return plugin;
   }
 
+  // src/url-folder.ts
+  var DEFAULT_ROOT = "firstmate-annotate";
+  var ROOT_MAX = 40;
+  var HOST_MAX = 48;
+  var SLUG_MAX = 64;
+  var FOLDER_MAX = ROOT_MAX + HOST_MAX + SLUG_MAX + 2;
+  var HASH_LEN = 8;
+  function shortHash(input) {
+    return hashString(input).slice(-HASH_LEN);
+  }
+  function sanitizeSegment(input) {
+    return input.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[.-]+|[.-]+$/g, "");
+  }
+  function capped(segment, max, source, forceHash) {
+    if (!forceHash && segment.length <= max) return segment;
+    const head = segment.slice(0, max - HASH_LEN - 1).replace(/[.-]+$/, "");
+    return head ? `${head}-${shortHash(source)}` : shortHash(source);
+  }
+  function parseRoot(input) {
+    const text = (input ?? "").trim();
+    if (!text) return [DEFAULT_ROOT];
+    if (text.startsWith("/") || text.startsWith("\\") || /^[a-z]:/i.test(text)) {
+      throw new Error(`root must be relative to the Downloads folder: ${text}`);
+    }
+    const segments = text.split(/[\\/]+/).filter(Boolean);
+    for (const segment of segments) {
+      if (segment === "." || segment === "..") throw new Error(`root must not contain "${segment}": ${text}`);
+      if (sanitizeSegment(segment) !== segment) {
+        throw new Error(`root segment "${segment}" may only use a-z, 0-9, ".", "_" and "-", and not start or end with "." or "-"`);
+      }
+    }
+    if (!segments.length) return [DEFAULT_ROOT];
+    if (segments.join("/").length > ROOT_MAX) throw new Error(`root is longer than ${ROOT_MAX} characters: ${text}`);
+    return segments;
+  }
+  function safeDecode(text) {
+    try {
+      return decodeURIComponent(text);
+    } catch {
+      return text;
+    }
+  }
+  function urlSegments(url) {
+    const parsed = new URL(url);
+    let host;
+    if (parsed.protocol === "file:") host = "file";
+    else {
+      const raw = parsed.port ? `${parsed.hostname}-${parsed.port}` : parsed.hostname;
+      const clean = sanitizeSegment(raw);
+      host = capped(clean || "unknown-host", HOST_MAX, raw, clean !== raw.toLowerCase());
+    }
+    const path = safeDecode(parsed.pathname);
+    const lossy = parsed.search.length > 1 || /[^\x00-\x7f]/.test(path);
+    const slug = capped(sanitizeSegment(path) || "index", SLUG_MAX, parsed.pathname + parsed.search, lossy);
+    return [host, slug];
+  }
+  function colocatedFolder(localPath, root) {
+    const dirs = localPath.split("/").filter(Boolean).slice(0, -1);
+    for (let at = dirs.length - root.length; at >= 0; at--) {
+      if (!root.every((segment, i) => dirs[at + i] === segment)) continue;
+      const rest = dirs.slice(at + root.length);
+      if (!rest.length || rest.some((segment) => sanitizeSegment(segment) !== segment)) return null;
+      const folder = [...root, ...rest];
+      return folder.join("/").length <= FOLDER_MAX ? folder : null;
+    }
+    return null;
+  }
+  function folderFor(url, root, localPath = null) {
+    const colocated = localPath ? colocatedFolder(localPath, root) : null;
+    return (colocated ?? [...root, ...urlSegments(url)]).join("/");
+  }
+
   // src/plugins/firstmate.ts
   var FIRSTMATE_SENT_SETTING = "firstmate.sent";
+  var FIRSTMATE_ROOT_SETTING = "firstmate.root";
+  var FIRSTMATE_CONFIG_FILENAME = "firstmate-annotate.config.json";
   var FIRSTMATE_FORMAT = "wm-annotate-firstmate";
   var FIRSTMATE_SCHEMA_VERSION = 1;
   function localPathOf(url) {
@@ -3249,11 +3335,12 @@ ${result.url}
     for (const n of notes) next[n.id] = n.updatedAt;
     return next;
   }
-  function buildFirstmatePayload(page, notes, now) {
+  function buildFirstmatePayload(page, notes, now, folder) {
     return {
       format: FIRSTMATE_FORMAT,
       schemaVersion: FIRSTMATE_SCHEMA_VERSION,
       sentAt: new Date(now).toISOString(),
+      folder,
       page: {
         url: page.url,
         title: page.title ?? null,
@@ -3277,32 +3364,61 @@ ${result.url}
   function firstmateFilename(now) {
     return `firstmate-annotate-${new Date(now).toISOString().replace(/[-:]/g, "")}.json`;
   }
-  function createFirstmatePlugin(options = {}) {
+  function createFirstmatePlugin(options) {
     let ctx = null;
     const cleanups = [];
-    const save = options.save ?? ((filename, text) => download(filename, text, "application/json"));
+    const ask = options.prompt ?? ((message, initial) => globalThis.prompt?.(message, initial) ?? null);
     const notify = options.notify ?? ((message) => globalThis.alert?.(message));
     const now = options.now ?? Date.now;
     const requireCtx = () => {
       if (!ctx) throw new Error("firstmate plugin is not attached to an annotator (call annotator.use(plugin) first)");
       return ctx;
     };
+    async function getRoot() {
+      const stored = await requireCtx().storage.getSetting?.(FIRSTMATE_ROOT_SETTING);
+      return parseRoot(typeof stored === "string" ? stored : null);
+    }
     async function send() {
       const c = requireCtx();
       const page = c.getPage();
       const sent = await c.storage.getSetting?.(FIRSTMATE_SENT_SETTING) ?? {};
       const pending = unsentNotes(await c.storage.getPage(page), sent);
-      if (!pending.length) return { sent: 0, filename: null };
+      if (!pending.length) return { sent: 0, path: null };
+      const root = await getRoot();
+      const folder = folderFor(page.url, root, localPathOf(page.url));
       const at = now();
-      const filename = firstmateFilename(at);
-      await save(filename, JSON.stringify(buildFirstmatePayload(page, pending, at), null, 2));
+      const path = `${folder}/${firstmateFilename(at)}`;
+      await options.save(
+        FIRSTMATE_CONFIG_FILENAME,
+        JSON.stringify({ format: "wm-annotate-firstmate-config", root: root.join("/") }, null, 2) + "\n",
+        { overwrite: true }
+      );
+      await options.save(path, JSON.stringify(buildFirstmatePayload(page, pending, at, folder), null, 2), {
+        overwrite: false
+      });
       await c.storage.setSetting?.(FIRSTMATE_SENT_SETTING, markSent(sent, pending));
-      return { sent: pending.length, filename };
+      return { sent: pending.length, path };
+    }
+    async function configureRoot() {
+      const c = requireCtx();
+      const current = (await getRoot()).join("/");
+      const entered = ask(
+        `Folder for firstmate sends, relative to the browser's Downloads folder (a-z, 0-9, ".", "_", "-", "/" between folders). Blank resets to ${DEFAULT_ROOT}.`,
+        current
+      );
+      if (entered === null) return;
+      try {
+        const root = parseRoot(entered);
+        await c.storage.setSetting?.(FIRSTMATE_ROOT_SETTING, root.join("/"));
+        notify(`Firstmate folder set to Downloads/${root.join("/")}. The watcher picks it up on the next send.`);
+      } catch (err) {
+        notify(`Folder not saved: ${err instanceof Error ? err.message : err}`);
+      }
     }
     const run = () => {
       void send().then(
         (result) => notify(
-          result.filename ? `Sent ${result.sent} note${result.sent === 1 ? "" : "s"} to firstmate as ${result.filename} (browser download folder).` : "No new or edited notes on this page to send to firstmate."
+          result.path ? `Sent ${result.sent} note${result.sent === 1 ? "" : "s"} to firstmate: Downloads/${result.path}` : "No new or edited notes on this page to send to firstmate."
         )
       ).catch((err) => notify(`Send to firstmate failed: ${err instanceof Error ? err.message : err}`));
     };
@@ -3311,12 +3427,20 @@ ${result.url}
       setup(pluginCtx) {
         ctx = pluginCtx;
         cleanups.push(pluginCtx.commands.register("firstmate.send", () => run()));
+        cleanups.push(pluginCtx.commands.register("firstmate.configure-root", () => configureRoot()));
         cleanups.push(
           pluginCtx.addHeaderAction({
             id: "firstmate",
-            label: "Send to firstmate",
-            title: "Save this page's unsent notes as a JSON file for firstmate",
-            onClick: run
+            label: "Firstmate",
+            title: "Send this page's unsent notes to firstmate",
+            items: () => {
+              const entries = [
+                { label: "Send to firstmate", onClick: run },
+                { group: "Settings" },
+                { label: "Folder\u2026", onClick: () => void configureRoot() }
+              ];
+              return entries;
+            }
           })
         );
       },

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  FIRSTMATE_CONFIG_FILENAME,
+  FIRSTMATE_ROOT_SETTING,
   FIRSTMATE_SENT_SETTING,
   buildFirstmatePayload,
   createFirstmatePlugin,
@@ -35,18 +37,20 @@ function note(id: string, over: Partial<Annotation> = {}): Annotation {
   };
 }
 
-function attach(opts: { failSave?: boolean; now?: number } = {}) {
+function attach(opts: { failSave?: boolean; now?: number; answers?: Array<string | null>; page?: PageIdentity } = {}) {
   const storage = createMemoryStorage();
-  const saved: Array<{ filename: string; text: string }> = [];
+  const saved: Array<{ path: string; text: string; overwrite: boolean }> = [];
   const notices: string[] = [];
+  const answers = [...(opts.answers ?? [])];
   const headerActions: HeaderAction[] = [];
   const registered: string[] = [];
   const plugin = createFirstmatePlugin({
-    save: async (filename, text) => {
+    save: async (path, text, { overwrite }) => {
       if (opts.failSave) throw new Error("disk full");
-      saved.push({ filename, text });
+      saved.push({ path, text, overwrite });
     },
     notify: (m) => notices.push(m),
+    prompt: () => (answers.length ? answers.shift()! : null),
     now: () => opts.now ?? Date.UTC(2026, 8, 28, 3, 20, 53, 123),
   });
   const ctx = {
@@ -58,7 +62,7 @@ function attach(opts: { failSave?: boolean; now?: number } = {}) {
     addNoteAction: () => () => {},
     addHeaderAction: (a: HeaderAction) => (headerActions.push(a), () => {}),
     activateSidebarTab: () => {},
-    getPage: () => docPage,
+    getPage: () => opts.page ?? docPage,
     getNotes: () => [],
     scrollToNote: async () => false,
   } satisfies PluginContext;
@@ -71,12 +75,14 @@ describe("firstmate serializer", () => {
     const payload = buildFirstmatePayload(
       docPage,
       [note("b", { createdAt: 3_000, updatedAt: 3_000 }), note("a", { anchor: { url: docPage.url, kind: "range", textQuote: { exact: "picked" } } })],
-      Date.UTC(2026, 8, 28)
+      Date.UTC(2026, 8, 28),
+      "firstmate-annotate/file/users-me-work-plan-v2.html"
     );
     expect(payload).toEqual({
       format: "wm-annotate-firstmate",
       schemaVersion: 1,
       sentAt: "2026-09-28T00:00:00.000Z",
+      folder: "firstmate-annotate/file/users-me-work-plan-v2.html",
       page: { url: docPage.url, title: "Plan v2", localPath: "/Users/me/work/plan v2.html" },
       notes: [
         {
@@ -100,7 +106,7 @@ describe("firstmate serializer", () => {
   it("gives a local path only for file:// pages", () => {
     expect(localPathOf("file:///tmp/x.html")).toBe("/tmp/x.html");
     expect(localPathOf(webPage.url)).toBeNull();
-    expect(buildFirstmatePayload(webPage, [], 0).page).toEqual({ url: webPage.url, title: null, localPath: null });
+    expect(buildFirstmatePayload(webPage, [], 0, "f").page).toEqual({ url: webPage.url, title: null, localPath: null });
   });
 
   it("names the file with a colon-free ISO timestamp", () => {
@@ -121,28 +127,46 @@ describe("unsentNotes", () => {
 });
 
 describe("firstmate plugin", () => {
-  it("registers the command and a sidebar header button", () => {
+  const payloadPath = "firstmate-annotate/example.com/a/firstmate-annotate-20260928T032053.123Z.json";
+
+  it("registers its commands and a Firstmate header dropdown", () => {
     const { registered, headerActions } = attach();
-    expect(registered).toEqual(["firstmate.send"]);
-    expect(headerActions.map((a) => [a.id, a.label])).toEqual([["firstmate", "Send to firstmate"]]);
+    expect(registered).toEqual(["firstmate.send", "firstmate.configure-root"]);
+    expect(headerActions.map((a) => a.id)).toEqual(["firstmate"]);
+    expect(headerActions[0].items?.().map((i) => i.label ?? i.group)).toEqual(["Send to firstmate", "Settings", "Folder…"]);
   });
 
-  it("saves only the current page's unsent notes, then marks them sent", async () => {
-    const { plugin, storage, saved } = attach();
-    await storage.save(note("n1"), docPage);
-    await storage.save({ ...note("w1"), pageId: webPage.id }, webPage);
+  it("saves only the current page's unsent notes into the per-URL folder, then marks them sent", async () => {
+    const { plugin, storage, saved } = attach({ page: webPage });
+    await storage.save({ ...note("n1"), pageId: webPage.id }, webPage);
+    await storage.save(note("d1"), docPage);
 
     const first = await plugin.send();
-    expect(first).toEqual({ sent: 1, filename: "firstmate-annotate-20260928T032053.123Z.json" });
-    expect(JSON.parse(saved[0].text).notes.map((n: { id: string }) => n.id)).toEqual(["n1"]);
+    expect(first).toEqual({ sent: 1, path: payloadPath });
+    expect(saved.map((s) => [s.path, s.overwrite])).toEqual([
+      [FIRSTMATE_CONFIG_FILENAME, true],
+      [payloadPath, false],
+    ]);
+    expect(JSON.parse(saved[0].text)).toEqual({ format: "wm-annotate-firstmate-config", root: "firstmate-annotate" });
+    const payload = JSON.parse(saved[1].text);
+    expect(payload.folder).toBe("firstmate-annotate/example.com/a");
+    expect(payload.notes.map((n: { id: string }) => n.id)).toEqual(["n1"]);
     expect(await storage.getSetting?.(FIRSTMATE_SENT_SETTING)).toEqual({ n1: 2_000 });
 
-    expect(await plugin.send()).toEqual({ sent: 0, filename: null });
-    expect(saved).toHaveLength(1);
+    expect(await plugin.send()).toEqual({ sent: 0, path: null });
+    expect(saved).toHaveLength(2);
 
-    await storage.save(note("n2"), docPage);
+    await storage.save({ ...note("n2"), pageId: webPage.id }, webPage);
     await plugin.send();
-    expect(JSON.parse(saved[1].text).notes.map((n: { id: string }) => n.id)).toEqual(["n2"]);
+    expect(JSON.parse(saved[3].text).notes.map((n: { id: string }) => n.id)).toEqual(["n2"]);
+  });
+
+  it("uses the configured root for the folder and the config file", async () => {
+    const { plugin, storage, saved } = attach({ page: webPage });
+    await storage.setSetting?.(FIRSTMATE_ROOT_SETTING, "fm/inbox");
+    await storage.save({ ...note("n1"), pageId: webPage.id }, webPage);
+    expect((await plugin.send()).path).toBe("fm/inbox/example.com/a/firstmate-annotate-20260928T032053.123Z.json");
+    expect(JSON.parse(saved[0].text).root).toBe("fm/inbox");
   });
 
   it("leaves notes unsent when the save fails", async () => {
@@ -152,15 +176,28 @@ describe("firstmate plugin", () => {
     expect(await storage.getSetting?.(FIRSTMATE_SENT_SETTING)).toBeUndefined();
   });
 
-  it("reports the outcome from the header button", async () => {
-    const { storage, headerActions, notices } = attach();
-    await storage.save(note("n1"), docPage);
-    headerActions[0].onClick?.();
+  it("stores a valid folder from the dropdown and refuses traversal", async () => {
+    const ok = attach({ answers: ["team/notes"] });
+    ok.headerActions[0].items?.()[2].onClick?.();
     await new Promise((r) => setTimeout(r, 0));
-    headerActions[0].onClick?.();
+    expect(await ok.storage.getSetting?.(FIRSTMATE_ROOT_SETTING)).toBe("team/notes");
+
+    const bad = attach({ answers: ["../etc"] });
+    bad.headerActions[0].items?.()[2].onClick?.();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(await bad.storage.getSetting?.(FIRSTMATE_ROOT_SETTING)).toBeUndefined();
+    expect(bad.notices[0]).toContain('must not contain ".."');
+  });
+
+  it("reports the outcome from the dropdown", async () => {
+    const { storage, headerActions, notices } = attach({ page: webPage });
+    await storage.save({ ...note("n1"), pageId: webPage.id }, webPage);
+    headerActions[0].items?.()[0].onClick?.();
+    await new Promise((r) => setTimeout(r, 0));
+    headerActions[0].items?.()[0].onClick?.();
     await new Promise((r) => setTimeout(r, 0));
     expect(notices).toEqual([
-      "Sent 1 note to firstmate as firstmate-annotate-20260928T032053.123Z.json (browser download folder).",
+      `Sent 1 note to firstmate: Downloads/${payloadPath}`,
       "No new or edited notes on this page to send to firstmate.",
     ]);
   });
