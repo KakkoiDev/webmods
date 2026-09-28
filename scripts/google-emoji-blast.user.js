@@ -2,7 +2,7 @@
 // @name         Google Emoji Blast
 // @namespace    http://tampermonkey.net/
 // @icon         https://www.google.com/favicon.ico
-// @version      2026.06.05.1
+// @version      2026.09.28
 // @description  Adds a button to the Google home page that blasts emoji across the screen
 // @author       KakkoiDev
 // @match        https://www.google.com/*
@@ -13,7 +13,7 @@
 
 // The @require line loads emoji-blast's browser build, which sets window.emojiBlast.
 // No GM_* APIs (@grant none) - the library only appends animated DOM nodes.
-// Button shows only on the bare home page (path "/"); removed on /search etc.
+// Button shows on the home page ("/" and "/webhp"); removed on /search etc.
 // Scoped to www.google.com only - other TLDs (google.co.jp, ...) are not covered.
 
 (function() {
@@ -48,7 +48,8 @@
     }
 
     function ensureButton() {
-        if (location.pathname !== '/') {
+        // The home page is served at both "/" and "/webhp" (e.g. ?hl=ja&sa=X...).
+        if (location.pathname !== '/' && location.pathname !== '/webhp') {
             const ex = document.getElementById(WRAP_ID);
             if (ex) ex.remove();
             return;
