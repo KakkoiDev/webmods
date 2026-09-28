@@ -126,6 +126,11 @@
       "blurb": "Scan your Tuta mailbox, group it by sender, and clean it up with shareable rules - dry-run first, move to Trash/Spam/folders, never permanent delete"
     },
     {
+      "file": "scripts/google-search-avatar-blur.user.js",
+      "name": "Google Search Avatar Blur",
+      "blurb": "Blurs your profile avatar in the Google top bar"
+    },
+    {
       "file": "scripts/google-dork-buttons.user.js",
       "name": "Google Dork Buttons",
       "blurb": "Adds one-click Google dork operator buttons under the Google search bar"

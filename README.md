@@ -40,6 +40,7 @@ The whole loop is AI-assisted, end to end:
 | [Notion Comment Recovery](scripts/notion-comment-recovery.user.js) | See every comment on a Notion page in one panel - open, resolved, and comments whose block or anchor was deleted - with export and one-click restore | `www.notion.so`, `app.notion.com`, `*.notion.so` | [Greasy Fork](https://greasyfork.org/en/scripts/588211) (unlisted - direct link) |
 | [GM_trystero (trystero devtool)](scripts/gm-trystero.user.js) | Exposes the full trystero WebRTC P2P API on window.GM_trystero on any page, for console-driven real-time experiments | `*` | [Greasy Fork](https://greasyfork.org/en/scripts/588309) (unlisted - direct link) |
 | [Tuta Inbox Janitor](scripts/tuta-inbox-janitor.user.js) | Scan your Tuta mailbox, group it by sender, and clean it up with shareable rules - dry-run first, move to Trash/Spam/folders, never permanent delete | `app.tuta.com` | not yet published |
+| [Google Search Avatar Blur](scripts/google-search-avatar-blur.user.js) | Blurs your profile avatar in the Google top bar | `www.google.com` | not yet published |
 | [Google Dork Buttons](scripts/google-dork-buttons.user.js) | Adds one-click Google dork operator buttons under the Google search bar | `www.google.com` | not yet published |
 <!-- scripts:end -->
 
