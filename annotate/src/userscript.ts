@@ -8,6 +8,7 @@ import { createChatPlugin } from "./plugins/chat";
 import { createGlobalBrowserPlugin } from "./plugins/global-browser";
 import { createExcalidrawPlugin } from "./plugins/excalidraw";
 import { createGistPlugin } from "./plugins/gist";
+import { createFirstmatePlugin } from "./plugins/firstmate";
 import { createPortableDataPlugin } from "./plugins/portable-data";
 import { createClaudeProvider } from "./providers/claude";
 import { createOpenAIProvider } from "./providers/openai";
@@ -105,6 +106,7 @@ export function startUserscript(): void {
   annotator.use(createGlobalBrowserPlugin());
   const gist = createGistPlugin({ fetchFn: typeof GM_xmlhttpRequest === "function" ? gmFetch : undefined });
   annotator.use(gist);
+  annotator.use(createFirstmatePlugin());
 
   // The Chat tab only exists once an API key is configured; nothing is ever
   // sent anywhere until the user presses Send.
@@ -129,6 +131,7 @@ export function startUserscript(): void {
     GM_registerMenuCommand("Export all sites (Markdown)", () => portable.downloadExport("markdown", { scope: "all" }));
     GM_registerMenuCommand("Upload this site to a secret gist", () => void annotator.commands.execute("gist.upload", "site"));
     GM_registerMenuCommand("Upload all sites to a secret gist", () => void annotator.commands.execute("gist.upload", "all"));
+    GM_registerMenuCommand("Send to firstmate", () => annotator.commands.execute("firstmate.send"));
     GM_registerMenuCommand("Configure AI chat…", async () => {
       const currentKind = (await storage.getSetting<string>(CHAT_PROVIDER_SETTING)) ?? "anthropic";
       const kindInput = prompt(

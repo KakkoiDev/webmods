@@ -13,6 +13,18 @@ export { createGlobalBrowserPlugin, searchAnnotations, noteLink } from "./plugin
 export type { GlobalBrowserPlugin, GlobalSearchResult } from "./plugins/global-browser";
 export { createGistPlugin, parseGistId, GIST_FILENAME, GIST_TOKEN_SETTING, GIST_URL_SETTING } from "./plugins/gist";
 export type { GistPlugin, GistPluginOptions, GistUploadOptions, GistUploadResult } from "./plugins/gist";
+export {
+  createFirstmatePlugin,
+  buildFirstmatePayload,
+  firstmateFilename,
+  localPathOf,
+  unsentNotes,
+  markSent,
+  FIRSTMATE_FORMAT,
+  FIRSTMATE_SCHEMA_VERSION,
+  FIRSTMATE_SENT_SETTING,
+} from "./plugins/firstmate";
+export type { FirstmatePlugin, FirstmatePluginOptions, FirstmatePayload, FirstmateNote, FirstmateSendResult } from "./plugins/firstmate";
 export { collectPages, filterPagesByScope, exportFilename } from "./plugins/portable-data";
 export type { PageGroup, ExportScope, ExportOptions } from "./plugins/portable-data";
 export { download, copyText } from "./dom-utils";

@@ -3130,6 +3130,108 @@ ${result.url}
   return plugin;
 }
 
+// src/plugins/firstmate.ts
+var FIRSTMATE_SENT_SETTING = "firstmate.sent";
+var FIRSTMATE_FORMAT = "wm-annotate-firstmate";
+var FIRSTMATE_SCHEMA_VERSION = 1;
+function localPathOf(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "file:") return null;
+  return decodeURIComponent(parsed.pathname);
+}
+function unsentNotes(notes, sent) {
+  return notes.filter((n) => !isArchived(n) && !(sent[n.id] >= n.updatedAt));
+}
+function markSent(sent, notes) {
+  const next = { ...sent };
+  for (const n of notes) next[n.id] = n.updatedAt;
+  return next;
+}
+function buildFirstmatePayload(page, notes, now) {
+  return {
+    format: FIRSTMATE_FORMAT,
+    schemaVersion: FIRSTMATE_SCHEMA_VERSION,
+    sentAt: new Date(now).toISOString(),
+    page: {
+      url: page.url,
+      title: page.title ?? null,
+      localPath: localPathOf(page.url)
+    },
+    notes: notes.slice().sort((a, b) => a.createdAt - b.createdAt).map((n) => ({
+      id: n.id,
+      anchor: {
+        kind: n.anchor.kind ?? "block",
+        selector: n.anchor.selector ?? null,
+        quote: n.anchor.textQuote?.exact ?? null,
+        prefix: n.anchor.textQuote?.prefix ?? null,
+        suffix: n.anchor.textQuote?.suffix ?? null
+      },
+      body: n.body.text,
+      createdAt: new Date(n.createdAt).toISOString(),
+      updatedAt: new Date(n.updatedAt).toISOString()
+    }))
+  };
+}
+function firstmateFilename(now) {
+  return `firstmate-annotate-${new Date(now).toISOString().replace(/[-:]/g, "")}.json`;
+}
+function createFirstmatePlugin(options = {}) {
+  let ctx = null;
+  const cleanups = [];
+  const save = options.save ?? ((filename, text) => download(filename, text, "application/json"));
+  const notify = options.notify ?? ((message) => globalThis.alert?.(message));
+  const now = options.now ?? Date.now;
+  const requireCtx = () => {
+    if (!ctx) throw new Error("firstmate plugin is not attached to an annotator (call annotator.use(plugin) first)");
+    return ctx;
+  };
+  async function send() {
+    const c = requireCtx();
+    const page = c.getPage();
+    const sent = await c.storage.getSetting?.(FIRSTMATE_SENT_SETTING) ?? {};
+    const pending = unsentNotes(await c.storage.getPage(page), sent);
+    if (!pending.length) return { sent: 0, filename: null };
+    const at = now();
+    const filename = firstmateFilename(at);
+    await save(filename, JSON.stringify(buildFirstmatePayload(page, pending, at), null, 2));
+    await c.storage.setSetting?.(FIRSTMATE_SENT_SETTING, markSent(sent, pending));
+    return { sent: pending.length, filename };
+  }
+  const run = () => {
+    void send().then(
+      (result) => notify(
+        result.filename ? `Sent ${result.sent} note${result.sent === 1 ? "" : "s"} to firstmate as ${result.filename} (browser download folder).` : "No new or edited notes on this page to send to firstmate."
+      )
+    ).catch((err) => notify(`Send to firstmate failed: ${err instanceof Error ? err.message : err}`));
+  };
+  const plugin = {
+    name: "firstmate",
+    setup(pluginCtx) {
+      ctx = pluginCtx;
+      cleanups.push(pluginCtx.commands.register("firstmate.send", () => run()));
+      cleanups.push(
+        pluginCtx.addHeaderAction({
+          id: "firstmate",
+          label: "Send to firstmate",
+          title: "Save this page's unsent notes as a JSON file for firstmate",
+          onClick: run
+        })
+      );
+    },
+    destroy() {
+      for (const off of cleanups.splice(0)) off();
+      ctx = null;
+    },
+    send
+  };
+  return plugin;
+}
+
 // src/plugins/chat.ts
 var MAX_PAGE_CHARS = 12e3;
 var MAX_TARGET_CHARS = 4e3;
@@ -3792,6 +3894,9 @@ function createExcalidrawPlugin(options = {}) {
 export {
   ARCHIVED_KEY,
   DocumentStorage,
+  FIRSTMATE_FORMAT,
+  FIRSTMATE_SCHEMA_VERSION,
+  FIRSTMATE_SENT_SETTING,
   GIST_FILENAME,
   GIST_TOKEN_SETTING,
   GIST_URL_SETTING,
@@ -3801,6 +3906,7 @@ export {
   archivedAt,
   blockTextWithMap,
   buildExcludeFn,
+  buildFirstmatePayload,
   buildRange,
   buildSelector,
   buildSystemPrompt,
@@ -3817,6 +3923,7 @@ export {
   createDefaultPageIdentityResolver,
   createEchoProvider,
   createExcalidrawPlugin,
+  createFirstmatePlugin,
   createGistPlugin,
   createGlobalBrowserPlugin,
   createIndexedDBStorage,
@@ -3830,12 +3937,15 @@ export {
   emptyDB,
   exportFilename,
   filterPagesByScope,
+  firstmateFilename,
   generateId,
   hashString,
   createIndexedDBStorage as indexedDBStorage,
   isArchived,
   isExcalidrawAttachment,
+  localPathOf,
   createLocalStorageStorage as localStorageStorage,
+  markSent,
   createMemoryStorage as memoryStorage,
   migrateDB,
   normalizeText,
@@ -3852,6 +3962,7 @@ export {
   stripOwnFragment,
   createTampermonkeyStorage as tampermonkeyStorage,
   textSimilarity,
+  unsentNotes,
   validateAnnotation,
   validateExportDocument
 };

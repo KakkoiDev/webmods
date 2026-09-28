@@ -2,7 +2,7 @@
 // @name         Webmods Annotate
 // @namespace    http://tampermonkey.net/
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM2MzY2ZjEiLz48dGV4dCB4PSIzMiIgeT0iNDIiIGZvbnQtc2l6ZT0iMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuKcj++4jzwvdGV4dD48L3N2Zz4=
-// @version      2026.09.28
+// @version      2026.09.28.2
 // @description  Annotate any web page with Markdown notes - robust anchors, cross-site Tampermonkey storage, notes sidebar, shareable note links, JSON export/import (Alt+Shift+A)
 // @author       KakkoiDev
 // @match        *://*/*
@@ -3530,6 +3530,108 @@ ${result.url}
     return plugin;
   }
 
+  // src/plugins/firstmate.ts
+  var FIRSTMATE_SENT_SETTING = "firstmate.sent";
+  var FIRSTMATE_FORMAT = "wm-annotate-firstmate";
+  var FIRSTMATE_SCHEMA_VERSION = 1;
+  function localPathOf(url) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return null;
+    }
+    if (parsed.protocol !== "file:") return null;
+    return decodeURIComponent(parsed.pathname);
+  }
+  function unsentNotes(notes, sent) {
+    return notes.filter((n) => !isArchived(n) && !(sent[n.id] >= n.updatedAt));
+  }
+  function markSent(sent, notes) {
+    const next = { ...sent };
+    for (const n of notes) next[n.id] = n.updatedAt;
+    return next;
+  }
+  function buildFirstmatePayload(page, notes, now) {
+    return {
+      format: FIRSTMATE_FORMAT,
+      schemaVersion: FIRSTMATE_SCHEMA_VERSION,
+      sentAt: new Date(now).toISOString(),
+      page: {
+        url: page.url,
+        title: page.title ?? null,
+        localPath: localPathOf(page.url)
+      },
+      notes: notes.slice().sort((a, b) => a.createdAt - b.createdAt).map((n) => ({
+        id: n.id,
+        anchor: {
+          kind: n.anchor.kind ?? "block",
+          selector: n.anchor.selector ?? null,
+          quote: n.anchor.textQuote?.exact ?? null,
+          prefix: n.anchor.textQuote?.prefix ?? null,
+          suffix: n.anchor.textQuote?.suffix ?? null
+        },
+        body: n.body.text,
+        createdAt: new Date(n.createdAt).toISOString(),
+        updatedAt: new Date(n.updatedAt).toISOString()
+      }))
+    };
+  }
+  function firstmateFilename(now) {
+    return `firstmate-annotate-${new Date(now).toISOString().replace(/[-:]/g, "")}.json`;
+  }
+  function createFirstmatePlugin(options = {}) {
+    let ctx = null;
+    const cleanups = [];
+    const save = options.save ?? ((filename, text) => download(filename, text, "application/json"));
+    const notify = options.notify ?? ((message) => globalThis.alert?.(message));
+    const now = options.now ?? Date.now;
+    const requireCtx = () => {
+      if (!ctx) throw new Error("firstmate plugin is not attached to an annotator (call annotator.use(plugin) first)");
+      return ctx;
+    };
+    async function send() {
+      const c = requireCtx();
+      const page = c.getPage();
+      const sent = await c.storage.getSetting?.(FIRSTMATE_SENT_SETTING) ?? {};
+      const pending = unsentNotes(await c.storage.getPage(page), sent);
+      if (!pending.length) return { sent: 0, filename: null };
+      const at = now();
+      const filename = firstmateFilename(at);
+      await save(filename, JSON.stringify(buildFirstmatePayload(page, pending, at), null, 2));
+      await c.storage.setSetting?.(FIRSTMATE_SENT_SETTING, markSent(sent, pending));
+      return { sent: pending.length, filename };
+    }
+    const run = () => {
+      void send().then(
+        (result) => notify(
+          result.filename ? `Sent ${result.sent} note${result.sent === 1 ? "" : "s"} to firstmate as ${result.filename} (browser download folder).` : "No new or edited notes on this page to send to firstmate."
+        )
+      ).catch((err) => notify(`Send to firstmate failed: ${err instanceof Error ? err.message : err}`));
+    };
+    const plugin = {
+      name: "firstmate",
+      setup(pluginCtx) {
+        ctx = pluginCtx;
+        cleanups.push(pluginCtx.commands.register("firstmate.send", () => run()));
+        cleanups.push(
+          pluginCtx.addHeaderAction({
+            id: "firstmate",
+            label: "Send to firstmate",
+            title: "Save this page's unsent notes as a JSON file for firstmate",
+            onClick: run
+          })
+        );
+      },
+      destroy() {
+        for (const off of cleanups.splice(0)) off();
+        ctx = null;
+      },
+      send
+    };
+    return plugin;
+  }
+
   // src/providers/context-prompt.ts
   var SYSTEM_PREAMBLE = "You are helping a user understand and annotate a web page. Answer from the page context below when it is relevant, and say so plainly when it is not. Be concise: lead with the answer, then supporting detail.";
   function buildSystemPrompt(context, preamble = SYSTEM_PREAMBLE) {
@@ -3769,6 +3871,7 @@ ${result.url}
     annotator.use(createGlobalBrowserPlugin());
     const gist = createGistPlugin({ fetchFn: typeof GM_xmlhttpRequest === "function" ? gmFetch : void 0 });
     annotator.use(gist);
+    annotator.use(createFirstmatePlugin());
     void (async () => {
       const apiKey = await storage.getSetting(CHAT_KEY_SETTING);
       if (!apiKey) return;
@@ -3789,6 +3892,7 @@ ${result.url}
       GM_registerMenuCommand("Export all sites (Markdown)", () => portable.downloadExport("markdown", { scope: "all" }));
       GM_registerMenuCommand("Upload this site to a secret gist", () => void annotator.commands.execute("gist.upload", "site"));
       GM_registerMenuCommand("Upload all sites to a secret gist", () => void annotator.commands.execute("gist.upload", "all"));
+      GM_registerMenuCommand("Send to firstmate", () => annotator.commands.execute("firstmate.send"));
       GM_registerMenuCommand("Configure AI chat\u2026", async () => {
         const currentKind = await storage.getSetting(CHAT_PROVIDER_SETTING) ?? "anthropic";
         const kindInput = prompt(
