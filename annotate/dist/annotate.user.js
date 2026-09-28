@@ -2,7 +2,7 @@
 // @name         Webmods Annotate
 // @namespace    http://tampermonkey.net/
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM2MzY2ZjEiLz48dGV4dCB4PSIzMiIgeT0iNDIiIGZvbnQtc2l6ZT0iMzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuKcj++4jzwvdGV4dD48L3N2Zz4=
-// @version      2026.09.28.4
+// @version      2026.09.28.5
 // @description  Annotate any web page with Markdown notes - robust anchors, cross-site Tampermonkey storage, notes sidebar, shareable note links, JSON export/import (Alt+Shift+A)
 // @author       KakkoiDev
 // @match        *://*/*
@@ -3989,8 +3989,15 @@ ${result.url}
     });
   }
   function gmSave(path, text, { overwrite }) {
+    if (typeof GM_download !== "function") {
+      return Promise.reject(
+        new Error(
+          "GM_download is not available to this script. If Annotate is running through a dev loader, the loader's own header must carry @grant GM_download (the loaded file's header is ignored)."
+        )
+      );
+    }
     const mode = typeof GM_info === "object" ? GM_info?.downloadMode : void 0;
-    if (typeof GM_download !== "function" || mode !== "browser") {
+    if (mode !== "browser") {
       return Promise.reject(
         new Error(
           `Tampermonkey download mode is "${mode ?? "unavailable"}". In the Tampermonkey dashboard's Settings tab, set Config mode to Advanced, then Download Mode to "Browser API", and allow the downloads permission.`

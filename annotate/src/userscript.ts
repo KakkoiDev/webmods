@@ -71,9 +71,17 @@ declare const GM_info: { downloadMode?: string } | undefined;
  * only honored in Tampermonkey's "Browser API" download mode; the native mode
  * flattens "a/b.json" into "a_b.json", which the watcher would never find.
  */
-function gmSave(path: string, text: string, { overwrite }: { overwrite: boolean }): Promise<void> {
+export function gmSave(path: string, text: string, { overwrite }: { overwrite: boolean }): Promise<void> {
+  if (typeof GM_download !== "function") {
+    return Promise.reject(
+      new Error(
+        "GM_download is not available to this script. If Annotate is running through a dev loader, the loader's " +
+          "own header must carry @grant GM_download (the loaded file's header is ignored)."
+      )
+    );
+  }
   const mode = typeof GM_info === "object" ? GM_info?.downloadMode : undefined;
-  if (typeof GM_download !== "function" || mode !== "browser") {
+  if (mode !== "browser") {
     return Promise.reject(
       new Error(
         `Tampermonkey download mode is "${mode ?? "unavailable"}". In the Tampermonkey dashboard's Settings tab, set ` +

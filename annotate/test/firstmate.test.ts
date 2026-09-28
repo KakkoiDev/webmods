@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   FIRSTMATE_CONFIG_FILENAME,
   FIRSTMATE_PORT_SETTING,
@@ -12,6 +12,7 @@ import {
   reloadEventsURL,
   unsentNotes,
 } from "../src/plugins/firstmate";
+import { gmSave } from "../src/userscript";
 import { ARCHIVED_KEY } from "../src/archive";
 import { createMemoryStorage } from "../src/storage";
 import type { Annotation, HeaderAction, PageIdentity, PluginContext } from "../src/types";
@@ -72,6 +73,29 @@ function attach(opts: { failSave?: boolean; now?: number; answers?: Array<string
   plugin.setup(ctx);
   return { plugin, storage, saved, notices, headerActions, registered };
 }
+
+describe("gmSave", () => {
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).GM_download;
+    delete (globalThis as Record<string, unknown>).GM_info;
+  });
+
+  it("blames a missing GM_download grant, not the download mode, even when the mode is already browser", async () => {
+    delete (globalThis as Record<string, unknown>).GM_download;
+    (globalThis as Record<string, unknown>).GM_info = { downloadMode: "browser" };
+
+    await expect(gmSave("a.json", "{}", { overwrite: false })).rejects.toThrow(
+      /GM_download is not available.*@grant GM_download/s
+    );
+  });
+
+  it("blames the download mode once GM_download is granted", async () => {
+    (globalThis as Record<string, unknown>).GM_download = () => {};
+    (globalThis as Record<string, unknown>).GM_info = { downloadMode: "native" };
+
+    await expect(gmSave("a.json", "{}", { overwrite: false })).rejects.toThrow(/download mode is "native"/);
+  });
+});
 
 describe("firstmate serializer", () => {
   it("serializes page identity, local path, anchors, bodies and timestamps", () => {
