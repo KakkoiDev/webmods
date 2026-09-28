@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Annotate: export scopes, archive, corner widget</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :root {
+    --ink: #1f2328;
+    --muted: #57606a;
+    --line: #d0d7de;
+    --surface: #ffffff;
+    --sunken: #f6f8fa;
+    --indigo: #6366f1;
+    --indigo-dark: #4338ca;
+    --indigo-soft: #eef2ff;
+    --amber: #b45309;
+    --amber-soft: #fffbeb;
+    --green: #15803d;
+    --green-soft: #f0fdf4;
+  }
+  html { background: #eef0f4; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--ink);
+  }
+  .page { max-width: 1120px; margin: 0 auto; padding: 32px 24px 96px; }
+  header.hero { border-bottom: 2px solid var(--ink); padding-bottom: 18px; margin-bottom: 28px; }
+  h1 { font-size: 27px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0; }
+  h2 { font-size: 19px; margin: 38px 0 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+  h2:first-of-type { border-top: 0; padding-top: 0; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p { margin: 0 0 10px; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+  code { background: var(--sunken); padding: 1px 5px; border-radius: 4px; }
+  .grid { display: grid; gap: 14px; }
+  .grid > * { min-width: 0; }
+  @media (min-width: 860px) { .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card h3 { margin-top: 0; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 7px; border-radius: 999px; }
+  .tag-have { background: var(--green-soft); color: var(--green); border: 1px solid #bbf7d0; }
+  .tag-new { background: var(--indigo-soft); color: var(--indigo-dark); border: 1px solid #c7d2fe; }
+  .tag-risk { background: var(--amber-soft); color: var(--amber); border: 1px solid #fde68a; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+  th { background: var(--sunken); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  ul, ol { margin: 0 0 10px; padding-left: 20px; }
+  li { margin-bottom: 5px; overflow-wrap: anywhere; }
+  .note { border-left: 3px solid var(--indigo); background: var(--indigo-soft); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 12px 0; }
+  .warn { border-left: 3px solid var(--amber); background: var(--amber-soft); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 12px 0; }
+
+  /* faithful mock of the annotator's own chrome */
+  .mock {
+    position: relative; height: 300px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--surface); overflow: hidden; font-size: 14px;
+  }
+  .mock-site { position: absolute; inset: 0; padding: 14px 18px; color: #8c959f; }
+  .mock-topbar { display: flex; justify-content: flex-end; gap: 8px; border-bottom: 1px solid var(--line); padding-bottom: 10px; margin: -4px -6px 14px; }
+  .mock-chip { font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; color: var(--muted); background: var(--sunken); }
+  .mock-line { height: 9px; border-radius: 4px; background: #eaeef2; margin-bottom: 9px; }
+  .mock-hotspot {
+    position: absolute; top: 0; right: 0; width: 22px; height: 22px;
+    border-left: 1px dashed var(--indigo); border-bottom: 1px dashed var(--indigo);
+    background: rgba(99,102,241,0.10);
+  }
+  .mock-hotspot::after {
+    content: "hover zone"; position: absolute; top: 3px; right: 26px; white-space: nowrap;
+    font-size: 10.5px; color: var(--indigo-dark);
+  }
+  .wm-widget {
+    position: absolute; top: 44px; right: 10px; width: 196px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(31,35,40,0.16); padding: 8px 10px;
+    display: grid; gap: 8px;
+  }
+  .wm-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .wm-label { font-size: 12.5px; color: var(--ink); }
+  .wm-switch { width: 34px; height: 19px; border-radius: 999px; background: var(--indigo); position: relative; flex: none; }
+  .wm-switch::after { content: ""; position: absolute; top: 2px; left: 17px; width: 15px; height: 15px; border-radius: 50%; background: #fff; }
+  .wm-btn {
+    font: inherit; font-size: 12px; padding: 4px 9px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--sunken); color: var(--ink); width: 100%; text-align: center;
+  }
+  .wm-btn-primary { background: var(--indigo); border-color: var(--indigo); color: #fff; }
+  .wm-pill {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    background: #24292f; color: #fff; font-size: 12px; padding: 5px 12px; border-radius: 999px; white-space: nowrap;
+  }
+  .wm-sidebar-mock {
+    position: absolute; top: 0; right: 0; bottom: 0; width: 210px;
+    background: var(--surface); border-left: 1px solid var(--line); padding: 0;
+  }
+  .wm-sb-head { display: flex; align-items: center; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
+  .wm-tab { border: 0; background: transparent; font: inherit; font-size: 12px; padding: 3px 7px; border-radius: 6px; color: var(--muted); }
+  .wm-tab.sel { background: var(--sunken); color: var(--ink); font-weight: 600; }
+  .wm-sb-body { padding: 10px; font-size: 12px; color: var(--muted); }
+  .wm-note-mock { border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; margin-bottom: 8px; }
+  .wm-note-mock .q { color: #8c959f; font-size: 11px; }
+  .wm-actions { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+  .wm-actions span { font-size: 10.5px; border: 1px solid var(--line); border-radius: 5px; padding: 2px 6px; }
+  .wm-actions span.hot { border-color: var(--indigo); color: var(--indigo-dark); background: var(--indigo-soft); }
+  .caption { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  form.q { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--indigo); border-radius: 0 10px 10px 0; padding: 14px 16px; margin: 14px 0; }
+  form.q h3 { margin: 0 0 4px; }
+  form.q .why { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+  form.q label { display: block; padding: 5px 0; font-size: 13.5px; }
+  form.q label input { margin-right: 8px; }
+  form.q button { font: inherit; font-size: 13px; margin-top: 8px; padding: 6px 14px; border-radius: 7px; border: 1px solid var(--indigo); background: var(--indigo); color: #fff; }
+  .rec { font-size: 11px; font-weight: 600; color: var(--indigo-dark); }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="hero">
+  <h1>Annotate: export scopes, archived notes, corner widget</h1>
+  <p class="sub">Plan for the four requests, checked against the code at 1e1a17b. One of them is already half built, which changes what is worth writing.</p>
+</header>
+
+<h2>What already exists (verified, not assumed)</h2>
+<div class="grid cols-3">
+  <div class="card">
+    <span class="tag tag-have">already works</span>
+    <h3>Export everything</h3>
+    <p><code>portableData.exportJSON()</code> calls <code>collectPages()</code>, which uses <code>storage.listAll()</code>, so it already returns <strong>every note from every site</strong>, not just this page.</p>
+    <p class="caption">portable-data.ts:91-147</p>
+  </div>
+  <div class="card">
+    <span class="tag tag-have">already works</span>
+    <h3>Two export formats</h3>
+    <p>The Tampermonkey menu has <em>Export annotations (JSON)</em> and <em>(Markdown)</em>. Both are global. Cost today: click the TM icon, then the item. Two clicks, and the menu is easy to forget.</p>
+    <p class="caption">userscript.ts:75-82</p>
+  </div>
+  <div class="card">
+    <span class="tag tag-new">missing</span>
+    <h3>Per-site export, archive, widget</h3>
+    <p>No scope filter on export, no archived state (<code>metadata</code> exists on every annotation but nothing writes it), no hover chrome. The only always-on affordances are the two keyboard shortcuts.</p>
+  </div>
+</div>
+
+<div class="note">
+  <strong>So the honest scope:</strong> "all notes from all websites in one click" is a button-placement job, not a feature build. The real new code is scope filtering, the archived state, and the widget.
+</div>
+
+<h2>1 and 2. Export: three scopes, one click each</h2>
+<p>Add an options argument to the existing plugin methods rather than new methods, so the Tampermonkey menu items keep working unchanged:</p>
+<div class="scroll" style="padding: 12px 14px;">
+<pre class="mono" style="margin:0; white-space:pre-wrap;">exportJSON(opts?: { scope?: "page" | "site" | "all"; includeArchived?: boolean }): Promise&lt;ExportDocument&gt;
+exportMarkdown(opts?: same): Promise&lt;string&gt;
+
+// scope: "page" -> pageId === current page
+//        "site" -> host of page.normalizedUrl matches the current host
+//        "all"  -> every stored page (today's behaviour, stays the default)</pre>
+</div>
+<p>Filtering happens on the already-collected <code>PageGroup[]</code>, so no storage change and no migration. Filenames carry the scope: <code>webmods-annotations-app.notion.com-2026-08-17.md</code>.</p>
+
+<h3>Where the one-click controls live</h3>
+<div class="grid cols-2">
+  <div>
+    <div class="mock">
+      <div class="mock-site">
+        <div class="mock-topbar"><span class="mock-chip">Share</span><span class="mock-chip">star</span><span class="mock-chip">...</span></div>
+        <div class="mock-line" style="width: 55%"></div>
+        <div class="mock-line" style="width: 80%"></div>
+        <div class="mock-line" style="width: 72%"></div>
+      </div>
+      <div class="wm-sidebar-mock">
+        <div class="wm-sb-head">
+          <button class="wm-tab sel">Notes</button>
+          <button class="wm-tab">All pages</button>
+          <span style="flex:1"></span>
+          <button class="wm-tab" title="Export this site">&#11015;</button>
+          <button class="wm-tab">&#10005;</button>
+        </div>
+        <div class="wm-sb-body">
+          <div style="margin-bottom:8px;">2 notes on this page</div>
+          <div class="wm-note-mock">
+            <div class="q">Add the Order and OrderLine...</div>
+            <div style="color:var(--ink)">nice</div>
+            <div class="wm-actions"><span>Edit</span><span>Copy link</span><span class="hot">Archive</span><span>Delete</span></div>
+          </div>
+          <div style="font-size:11.5px;">&#9656; Archived (3)</div>
+        </div>
+      </div>
+    </div>
+    <p class="caption">Notes tab: the download icon in the header exports <strong>this site</strong>. Each card gains <strong>Archive</strong> next to Delete. Archived notes collapse into a disclosure row.</p>
+  </div>
+  <div>
+    <div class="mock">
+      <div class="mock-site">
+        <div class="mock-topbar"><span class="mock-chip">Share</span><span class="mock-chip">star</span><span class="mock-chip">...</span></div>
+        <div class="mock-line" style="width: 40%"></div>
+        <div class="mock-line" style="width: 66%"></div>
+      </div>
+      <div class="wm-sidebar-mock">
+        <div class="wm-sb-head">
+          <button class="wm-tab">Notes</button>
+          <button class="wm-tab sel">All pages</button>
+          <span style="flex:1"></span>
+          <button class="wm-tab" title="Export everything">&#11015;</button>
+          <button class="wm-tab">&#10005;</button>
+        </div>
+        <div class="wm-sb-body">
+          <div style="margin-bottom:8px;">7 notes, 3 sites</div>
+          <div class="wm-note-mock"><div class="q">app.notion.com</div><div style="color:var(--ink)">4 notes</div></div>
+          <div class="wm-note-mock"><div class="q">github.com</div><div style="color:var(--ink)">2 notes</div></div>
+        </div>
+      </div>
+    </div>
+    <p class="caption">All pages tab: the same icon exports <strong>everything</strong>. Scope follows the tab you are looking at, so there is nothing to choose and nothing to mislabel.</p>
+  </div>
+</div>
+
+<h2>3. Archived notes</h2>
+<div class="grid cols-2">
+  <div class="card">
+    <h3>State</h3>
+    <p><code>metadata.archived = Date.now()</code> through the existing <code>updateNote(id, { metadata })</code>. No schema bump, no migration, and older builds simply ignore the key.</p>
+    <p>New annotator API: <code>archiveNote(id)</code> and <code>unarchiveNote(id)</code>, plus <code>commands</code> entries so the widget and the menu can reach them.</p>
+  </div>
+  <div class="card">
+    <h3>Behaviour</h3>
+    <ul>
+      <li>Archived notes get <strong>no page marker and no highlight</strong>. That is the point of archiving.</li>
+      <li>They drop out of the Notes count and sit behind <code>Archived (n)</code>, each with <strong>Restore</strong>.</li>
+      <li>Anchor resolution is skipped for them, so a stale archived note never wakes the mutation observer.</li>
+      <li>Exports keep them with the flag intact, so a backup and restore cycle never silently drops or resurrects notes.</li>
+    </ul>
+  </div>
+</div>
+
+<h2>4. Corner widget</h2>
+<div class="grid cols-2">
+  <div>
+    <div class="mock">
+      <div class="mock-site">
+        <div class="mock-topbar"><span class="mock-chip">Share</span><span class="mock-chip">star</span><span class="mock-chip">...</span></div>
+        <div class="mock-line" style="width: 62%"></div>
+        <div class="mock-line" style="width: 78%"></div>
+        <div class="mock-line" style="width: 45%"></div>
+      </div>
+      <div class="mock-hotspot"></div>
+      <div class="wm-widget">
+        <div class="wm-row"><span class="wm-label">Edit mode</span><span class="wm-switch"></span></div>
+        <button class="wm-btn wm-btn-primary">Notes sidebar</button>
+      </div>
+      <div class="wm-pill">Annotate mode, click a block to add a note (Esc to exit)</div>
+    </div>
+    <p class="caption">The panel sits <strong>44px below</strong> the corner so it never covers the site's own top-right controls (Notion's Share and star, GitHub's avatar menu, Gmail's settings).</p>
+  </div>
+  <div class="card">
+    <h3>Mechanics</h3>
+    <ul>
+      <li>A 22x22 hotspot at the corner with <code>pointer-events: none</code>. Detection rides the <code>pointermove</code> listener the annotator already has, so nothing new intercepts clicks.</li>
+      <li>Shows after a <strong>250 ms dwell</strong> inside the corner, hides 400 ms after the pointer leaves both hotspot and panel.</li>
+      <li>The toggle mirrors annotate mode both ways: <code>Alt+Shift+A</code> flips the switch, and the switch drives <code>setMode</code>. The button calls the existing <code>sidebar.toggle</code> command.</li>
+      <li>Lives in the same shadow-root layer (<code>UI_ATTR</code>), so it is never itself annotatable.</li>
+      <li>Option <code>ui.cornerWidget: false</code> turns it off. On by default in the userscript host.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="tag tag-risk">the risk I would push back on</span>
+  <p style="margin:8px 0 0;">Top-right is the most crowded corner on the web, and this script runs on <code>*://*/*</code>. Even with <code>pointer-events: none</code> on the hotspot, the <em>panel</em> is clickable while shown, so a stray hover parks a 196px card over whatever the site keeps up there until you move away. The 44px offset and the dwell delay make that survivable, not invisible. If it annoys you, the honest fix is bottom-right, which almost no app uses for primary controls.</p>
+</div>
+
+<h2>Code touchpoints</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>File</th><th>Change</th><th>Tests</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">src/plugins/portable-data.ts</td><td>scope and includeArchived options, scoped filenames</td><td>portable-data.test.ts: page/site/all filtering, archived flag round-trip</td></tr>
+    <tr><td class="mono">src/annotator.ts</td><td><code>archiveNote</code> and <code>unarchiveNote</code>, commands, skip resolution for archived</td><td>annotator.test.ts: archive hides the marker, restore brings it back</td></tr>
+    <tr><td class="mono">src/ui.ts</td><td>header export button per tab, Archive/Restore card actions, archived disclosure, corner widget and hotspot</td><td>accessibility.test.ts: widget reachable by keyboard, aria-pressed on the toggle</td></tr>
+    <tr><td class="mono">src/types.ts</td><td><code>ui.cornerWidget</code> option, archive methods on the Annotator interface</td><td>typecheck</td></tr>
+    <tr><td class="mono">src/userscript.ts</td><td>menu items for the two new scopes, keeping parity with the buttons</td><td>none</td></tr>
+    <tr><td class="mono">docs/webmods-annotate-spec.md</td><td>document archive semantics and the widget</td><td>none</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Failure modes I will cover</h2>
+<div class="grid cols-3">
+  <div class="card"><h3>No-hover devices</h3><p>A touch device never fires the corner hover. The shortcuts and the TM menu stay the guaranteed entry points, so the widget is additive and never the only path.</p></div>
+  <div class="card"><h3>Fullscreen video and games</h3><p>The panel would float over a fullscreen element, so it hides whenever <code>document.fullscreenElement</code> is set.</p></div>
+  <div class="card"><h3>Export of a huge store</h3><p><code>collectPages</code> already loads everything into memory and scoping filters after that. For a large store the <code>site</code> scope is the cheap path, <code>all</code> stays as slow as today.</p></div>
+</div>
+
+<h2>Open questions</h2>
+
+<form class="q" data-lavish-question="site-scope" onsubmit='event.preventDefault(); const v = new FormData(event.currentTarget).get("scope"); if (v) window.lavish.queuePrompt("Export scope for a website: " + v, { tag: "choice", text: "Site scope: " + v, element: event.currentTarget, data: { question: "site-scope", answer: v } });'>
+  <h3>Q1. "All the notes of a website" means</h3>
+  <p class="why">Your words could mean the current page or the whole domain. The sidebar already lists the current page, which is why I lean host-wide.</p>
+  <label><input type="radio" name="scope" value="whole host, every page on that domain" checked> Whole host, every page on that domain <span class="rec">recommended</span></label>
+  <label><input type="radio" name="scope" value="current page only"> Current page only</label>
+  <label><input type="radio" name="scope" value="both buttons, page and host"> Both, two separate buttons</label>
+  <button type="submit">Queue this answer</button>
+</form>
+
+<form class="q" data-lavish-question="format" onsubmit='event.preventDefault(); const v = new FormData(event.currentTarget).get("fmt"); if (v) window.lavish.queuePrompt("Export button format: " + v, { tag: "choice", text: "Format: " + v, element: event.currentTarget, data: { question: "format", answer: v } });'>
+  <h3>Q2. One click means one format per button</h3>
+  <p class="why">A dropdown would cost a second click. So either two small buttons per scope, or one format on the button with the other left in the TM menu.</p>
+  <label><input type="radio" name="fmt" value="two buttons, MD and JSON" checked> Two tiny buttons, <code>MD</code> and <code>JSON</code> <span class="rec">recommended</span></label>
+  <label><input type="radio" name="fmt" value="Markdown only on the button"> Markdown only, JSON stays in the menu</label>
+  <label><input type="radio" name="fmt" value="JSON only on the button"> JSON only, Markdown stays in the menu</label>
+  <button type="submit">Queue this answer</button>
+</form>
+
+<form class="q" data-lavish-question="widget-corner" onsubmit='event.preventDefault(); const f = new FormData(event.currentTarget); const v = f.get("corner"); if (v) window.lavish.queuePrompt("Widget corner: " + v + (f.get("dwell") ? " (keep the 250ms dwell)" : " (no dwell, show immediately)"), { tag: "choice", text: "Corner: " + v, element: event.currentTarget, data: { question: "widget-corner", answer: v, dwell: !!f.get("dwell") } });'>
+  <h3>Q3. Widget corner</h3>
+  <p class="why">You asked for top-right. That is where nearly every app puts its own controls, and this script matches every site.</p>
+  <label><input type="radio" name="corner" value="top-right as asked, panel offset 44px down" checked> Top-right as asked, panel offset 44px below the corner</label>
+  <label><input type="radio" name="corner" value="bottom-right instead"> Bottom-right instead, far fewer collisions</label>
+  <label><input type="radio" name="corner" value="top-right, and make it configurable"> Top-right, plus an option to move it</label>
+  <label style="margin-top:6px; border-top:1px solid var(--line); padding-top:8px;"><input type="checkbox" name="dwell" checked> Keep the 250 ms dwell before it appears</label>
+  <button type="submit">Queue this answer</button>
+</form>
+
+<form class="q" data-lavish-question="archive-export" onsubmit='event.preventDefault(); const v = new FormData(event.currentTarget).get("arch"); if (v) window.lavish.queuePrompt("Archived notes in exports: " + v, { tag: "choice", text: "Archived in exports: " + v, element: event.currentTarget, data: { question: "archive-export", answer: v } });'>
+  <h3>Q4. Archived notes in exports</h3>
+  <p class="why">JSON has to keep them or a backup and restore cycle deletes work. Markdown is for reading, so that one is a real choice.</p>
+  <label><input type="radio" name="arch" value="JSON keeps them, Markdown puts them in a trailing Archived section" checked> JSON keeps them, Markdown ends with an <em>Archived</em> section <span class="rec">recommended</span></label>
+  <label><input type="radio" name="arch" value="JSON keeps them, Markdown omits them"> JSON keeps them, Markdown omits them</label>
+  <label><input type="radio" name="arch" value="both include them inline, no separation"> Both include them inline, no separation</label>
+  <button type="submit">Queue this answer</button>
+</form>
+
+<form class="q" data-lavish-question="order" onsubmit='event.preventDefault(); const v = new FormData(event.currentTarget).get("order"); if (v) window.lavish.queuePrompt("Build order: " + v, { tag: "choice", text: "Order: " + v, element: event.currentTarget, data: { question: "order", answer: v } });'>
+  <h3>Q5. Ship order</h3>
+  <p class="why">Four features, one commit each, each verified live on Notion before the next.</p>
+  <label><input type="radio" name="order" value="export scopes, then archive, then widget" checked> Export scopes, then archive, then widget <span class="rec">smallest risk first</span></label>
+  <label><input type="radio" name="order" value="widget first, it is the one I see every day"> Widget first, it is the one I see every day</label>
+  <label><input type="radio" name="order" value="all four in one pass, review at the end"> All four in one pass, review at the end</label>
+  <button type="submit">Queue this answer</button>
+</form>
+
+<p class="caption">Annotate anything on this page with Lavish, or answer the questions and send. Anything left unanswered I build as marked recommended.</p>
+
+</div>
+</body>
+</html>
