@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Local Browser Agent",
+  "version": "0.1.0",
+  "minimum_chrome_version": "124",
+  "description": "A fully local browser agent: compact DOM observations, typed decisions, and local text generation.",
+  "permissions": ["storage", "activeTab", "scripting", "offscreen"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "Local Browser Agent" },
+  "commands": {
+    "_execute_action": { "suggested_key": { "default": "Alt+Shift+L", "mac": "Command+Shift+L" } }
+  }
+}
