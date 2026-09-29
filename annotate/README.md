@@ -58,7 +58,7 @@ Browser global:
 - `src/plugins/portable-data.ts` — `exportJSON` / `importJSON` (skip/replace/merge/duplicate, default non-destructive skip), `exportMarkdown`, size-capped inline `#wm=` URLs
 - `src/plugins/global-browser.ts` — "All pages" sidebar tab: live search across every stored annotation (AND-ed tokens over note body, anchored quote, URL and title, plus a `site:` filter), collapsible per-page groups with counts, per-page JSON export, and click-through that scrolls to same-page notes or opens another page on its `#wm-note=` link. Adapters without `listAll`/`listPages` degrade to a message
 - `src/plugins/chat.ts` + `src/providers/{claude,openai}.ts` — optional AI conversation pane. The plugin adds a Chat sidebar tab and an "Ask AI" note action, assembles a structured context per scope (this page / all notes / one note, each size-capped) and always shows the user what will be sent; nothing leaves the browser until Send is pressed. Providers are pluggable (`ChatProvider`); two ship in the box — Claude (Messages API) and a generic OpenAI-compatible one whose `baseURL` also covers OpenRouter, Groq, Together and local Ollama. Both stream SSE browser-side and share `providers/sse.ts` + `providers/context-prompt.ts`. No core module imports any of them
-- `src/plugins/firstmate.ts` + `src/url-folder.ts` + `bin/firstmate-drop-watch.mjs` - "Send to firstmate": hands the current page's unsent notes to a firstmate agent through a JSON file saved in a sanitized per-URL folder under Downloads, and a watcher that turns each file into an inbox note. No server. See [Send to firstmate](#send-to-firstmate)
+- `src/plugins/firstmate.ts` + `src/url-folder.ts` + `bin/firstmate-drop-watch.mjs` (+ `bin/firstmate-drop-watch-service.mjs`, the launchd installer) - "Send to firstmate": hands the current page's unsent notes to a firstmate agent through a JSON file saved in a sanitized per-URL folder under Downloads, and a watcher that turns each file into an inbox note. No server. See [Send to firstmate](#send-to-firstmate)
 - `src/plugins/excalidraw.ts` — optional whiteboards attached to notes. Lazy-loads Excalidraw (+React) from esm.sh only when a board is first opened, so it adds no weight otherwise; stores the full editable scene as an `excalidraw` attachment (rides along in JSON export) plus a size-capped SVG preview shown on the sidebar card. Adds an "Add board"/"Open board" note action and the `note.open-board` command. A custom `loader` option can replace the CDN (e.g. for CSP-strict sites)
 
 ## Reference userscript
@@ -142,6 +142,22 @@ The watcher scans `<downloads>/<root>` recursively, up to 8 levels deep, and ski
 - **Unparseable file:** it moves to `rejected/` in the same folder, with a `failed` status.
 - **Failed `fm-inbox.sh` call:** the file stays in place and is retried on the next scan. The status says `failed` with the reason until a retry succeeds.
 - **Environment:** `FM_HOME` passes through to `fm-inbox.sh`.
+
+### Run the watcher at login (macOS)
+
+A watcher nobody started delivers nothing: a send just sits in Downloads. A per-user launchd agent starts it at login and restarts it within about 3 seconds after a crash or kill (`KeepAlive`, `ThrottleInterval` 3).
+
+```
+node annotate/bin/firstmate-drop-watch-service.mjs install --fm-root /path/to/firstmate --fm-home /path/to/firstmate
+node annotate/bin/firstmate-drop-watch-service.mjs uninstall
+```
+
+- **Install arguments:** `--fm-root` (the checkout holding `bin/fm-inbox.sh`) and `--fm-home` (passed to the watcher as `FM_HOME`) are required and written only into the plist in `~/Library/LaunchAgents`, never into a tracked file. Optional: `--downloads`, `--port` (passed to the watcher), `--label` (default `com.kakkoidev.webmods.firstmate-drop-watch`), `--agents-dir`, `--log`.
+- **Log file:** `~/Library/Logs/webmods/firstmate-drop-watch.log` (stdout and stderr of the watcher, including each `sent` line).
+- **Re-install:** running `install` again replaces the agent, so one is loaded at most. Re-run it after moving the checkout or changing Node: the plist pins the absolute path of the `node` that ran `install`, and that shell's `PATH`, which `fm-inbox.sh` needs.
+- **One watcher at a time:** the server port (4817) has a single owner. If a watcher that launchd does not own already holds it, `install` writes the plist but does not load it and prints `deferred`. Nothing is killed. Handover: stop the hand-started watcher, then run `install` again (it also loads at the next login).
+- **Uninstall:** unloads the agent and deletes the plist. It does not stop a hand-started watcher, and leaves the log.
+- **Check:** `launchctl print gui/$(id -u)/com.kakkoidev.webmods.firstmate-drop-watch` shows the pid; `tail -f` the log.
 
 ### Status files
 
