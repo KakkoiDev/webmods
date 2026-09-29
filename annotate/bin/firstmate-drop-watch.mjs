@@ -7,6 +7,9 @@
 // records the delivery for the page. The request id is the file's sha256, so
 // re-running on the same file replays the original note instead of adding one.
 //
+// After delivery it reconciles each status file with firstmate's own records
+// (`fm-inbox.sh receipts`, read-only): a note firstmate acknowledged becomes
+// "assigned", a note it replied to becomes "done" with the reply in replies[].
 // While watching (not --once) it also serves live reload, the status feed, and
 // docs under the root: see firstmate-reload-server.mjs.
 //
@@ -50,6 +53,12 @@ export const DEFAULT_ROOT = "firstmate-annotate";
 const SKIP_DIRS = new Set(["processed", "rejected", "status"]);
 const MAX_DEPTH = 8;
 const PICKUP_DEBOUNCE_MS = 25;
+/** Minimum gap between two `fm-inbox.sh receipts` calls while watching. */
+const RECONCILE_MIN_MS = 5000;
+/** A status older than this is left alone: its note is no longer being waited on. */
+const RECONCILE_MAX_AGE_MS = 7 * 24 * 3600_000;
+export const WAITING_MESSAGE = "Waiting for firstmate: queued in the inbox, not handled yet";
+export const ACKNOWLEDGED_MESSAGE = "Firstmate picked this up, no answer yet";
 /** A doc the 127.0.0.1 server serves: http://127.0.0.1:<port>/doc/<path under the root>. */
 const SERVED_DOC = /^http:\/\/(?:127\.0\.0\.1|localhost):\d+\/doc\/(.+)$/;
 
@@ -249,6 +258,99 @@ export function processFile(file, { fmRoot, rootDir = null, log = console.error,
   return "sent";
 }
 
+/** Status files under `dir`: <per-URL folder>/status/<request id>.json, dotfiles skipped. */
+export function findStatusFiles(dir, depth = 0) {
+  if (depth > MAX_DEPTH || !existsSync(dir)) return [];
+  const found = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory() && entry.name === "status") {
+      for (const f of readdirSync(path, { withFileTypes: true })) {
+        if (f.isFile() && f.name.endsWith(".json") && !f.name.startsWith(".")) found.push(join(path, f.name));
+      }
+    } else if (entry.isDirectory() && !SKIP_DIRS.has(entry.name)) found.push(...findStatusFiles(path, depth + 1));
+  }
+  return found;
+}
+
+function writeStatusFile(path, status) {
+  const tmp = join(dirname(path), `.${basename(path)}.tmp`);
+  writeFileSync(tmp, `${JSON.stringify(status, null, 2)}\n`);
+  renameSync(tmp, path);
+}
+
+/** Firstmate's published view of its inbox, or null when `fm-inbox.sh receipts` fails. */
+function readReceipts(fmRoot, log) {
+  const result = spawnSync(join(fmRoot, "bin", "fm-inbox.sh"), ["receipts", "--all-pending", "--all-handled", "--all-replies"], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    log(`receipts failed: fm-inbox.sh exited ${result.status}: ${(result.stderr || result.error?.message || "").trim().split("\n")[0]}`);
+    return null;
+  }
+  try {
+    const receipts = JSON.parse(result.stdout);
+    return Array.isArray(receipts.pending) && Array.isArray(receipts.handled) ? receipts : null;
+  } catch {
+    log("receipts failed: output is not JSON");
+    return null;
+  }
+}
+
+/**
+ * Carry firstmate's progress from its inbox records into the status files, for
+ * every status still "received" or "assigned" with an inbox id:
+ *   reply recorded          -> "done", the reply appended to replies[] for each note
+ *   acknowledged, no reply  -> "assigned"
+ *   still queued            -> stays "received", message says firstmate has not handled it
+ * A status firstmate already moved to "done" or "failed" by hand is never touched.
+ * Returns how many status files it rewrote.
+ */
+export function reconcileStatuses(dir, { fmRoot, log = console.error, now = Date.now }) {
+  const open = [];
+  for (const path of findStatusFiles(dir)) {
+    const status = readStatus(path);
+    if (status?.format !== STATUS_FORMAT || !status.inboxId) continue;
+    if (status.state !== "received" && status.state !== "assigned") continue;
+    if (now() - Date.parse(status.at) > RECONCILE_MAX_AGE_MS) continue;
+    open.push({ path, status });
+  }
+  if (!open.length) return 0;
+  const receipts = readReceipts(fmRoot, log);
+  if (!receipts) return 0;
+  const notes = new Map([...receipts.pending, ...receipts.handled].map((n) => [n.id, n]));
+  let written = 0;
+  for (const { path, status } of open) {
+    const note = notes.get(status.inboxId);
+    if (!note) continue;
+    const at = new Date(now()).toISOString();
+    let next = null;
+    if (note.reply) {
+      const text = String(note.reply.body ?? "");
+      const noteIds = Array.isArray(status.noteIds) ? status.noteIds : [];
+      next = {
+        ...status,
+        state: "done",
+        at,
+        message: `Firstmate replied: ${text.split("\n")[0].slice(0, 160)}`,
+        replies: [
+          ...(Array.isArray(status.replies) ? status.replies : []),
+          ...noteIds.map((noteId) => ({ noteId, author: "firstmate", at: note.reply.at ?? at, text, link: null, done: true })),
+        ],
+      };
+    } else if (note.acknowledged && status.state === "received") {
+      next = { ...status, state: "assigned", at, message: ACKNOWLEDGED_MESSAGE };
+    } else if (!note.acknowledged && status.state === "received" && status.message !== WAITING_MESSAGE) {
+      next = { ...status, at, message: WAITING_MESSAGE };
+    }
+    if (!next) continue;
+    writeStatusFile(path, next);
+    written++;
+    log(`status ${basename(path)}: ${status.state} -> ${next.state} (${next.message})`);
+  }
+  return written;
+}
+
 /** Drop files under `dir`, skipping processed/, rejected/ and status/ folders. */
 export function findDropFiles(dir, depth = 0) {
   if (depth > MAX_DEPTH || !existsSync(dir)) return [];
@@ -350,6 +452,7 @@ async function main() {
   let watching = null;
   let tree = null;
   let pickup = null;
+  let lastReconcile = 0;
   const scan = () => {
     let root;
     try {
@@ -375,7 +478,16 @@ async function main() {
         pickup = setTimeout(scan, PICKUP_DEBOUNCE_MS);
       });
     }
-    return scanOnce(dir, options);
+    const outcomes = scanOnce(dir, options);
+    if (args.once || Date.now() - lastReconcile >= RECONCILE_MIN_MS) {
+      lastReconcile = Date.now();
+      try {
+        reconcileStatuses(dir, options);
+      } catch (err) {
+        console.error(`firstmate-drop-watch: reconcile failed: ${err.message}`);
+      }
+    }
+    return outcomes;
   };
   if (args.once) process.exit(scan().includes("failed") ? 1 : 0);
   scan();

@@ -161,7 +161,15 @@ node annotate/bin/firstmate-drop-watch-service.mjs uninstall
 
 ### Status files
 
-Every delivered drop file gets `<per-URL folder>/status/<request id>.json`, where the request id is the drop file's sha256 (the same id `fm-inbox.sh` got). The page shows it live. The watcher writes `received` or `failed`. Firstmate writes everything after that.
+Every delivered drop file gets `<per-URL folder>/status/<request id>.json`, where the request id is the drop file's sha256 (the same id `fm-inbox.sh` got). The page shows it live. The watcher writes `received` or `failed`, and firstmate may write everything after that by hand.
+
+The watcher also follows firstmate's own records, read-only through `fm-inbox.sh receipts`, at most every 5 s and only while a status younger than 7 days is still `received` or `assigned`:
+
+- Note still in the inbox: stays `received`, message `Waiting for firstmate: queued in the inbox, not handled yet` (the page's tooltip).
+- Note acknowledged, no reply yet: `assigned`, message `Firstmate picked this up, no answer yet`. The page shows it as stale after 10 minutes.
+- Reply recorded with `fm-inbox.sh reply`: `done`, message `Firstmate replied: <first line>`, and the reply text appended to `replies` once per note in `noteIds` with `done: true`. The inbox reply is per send, not per note, so every note of the send shows it. A reply that says work continues still shows `done`; the schema has no "replied" state.
+
+A status already `done` or `failed` is never touched.
 
 ```jsonc
 {

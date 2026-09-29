@@ -6,9 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  ACKNOWLEDGED_MESSAGE,
+  WAITING_MESSAGE,
   checkRoot,
   inboxIdOf,
   isDropPath,
+  reconcileStatuses,
   renderMarkdown,
   resolveRoot,
   scanOnce,
@@ -75,6 +78,7 @@ const STUB = `#!/usr/bin/env bash
 set -eu
 here="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$here/fail" ] && { echo "stub failure" >&2; exit 1; }
+if [ "$1" = receipts ]; then cat "$here/receipts.json"; exit 0; fi
 [ "$1" = note ] && [ "$2" = --request-id ] && [ "$4" = - ] || { echo "bad args: $*" >&2; exit 2; }
 mkdir -p "$here/notes"
 if [ -f "$here/notes/$3" ]; then echo "replay fm-$3"; exit 0; fi
@@ -227,6 +231,100 @@ describe("scanOnce", () => {
     writeFileSync(join(folder, name), text);
     scanOnce(tree, options());
     expect(readStatus()).toEqual(assigned);
+  });
+
+  // Shape of `fm-inbox.sh receipts` (fm-inbox-receipts.v1) for the one note this file delivered.
+  const receipts = (note: { acknowledged: boolean; reply?: { at: string; body: string } }) =>
+    writeFileSync(
+      join(fmRoot, "receipts.json"),
+      JSON.stringify({
+        schema: "fm-inbox-receipts.v1",
+        pending: note.acknowledged ? [] : [{ id: `fm-${digest}`, acknowledged: false, reply: null }],
+        handled: note.acknowledged
+          ? [{ id: `fm-${digest}`, acknowledged: true, reply: note.reply ? { id: `fm-${digest}`, cursor: "000000000001", ...note.reply } : null }]
+          : [],
+        replies: [],
+        omitted: [],
+      })
+    );
+  const deliver = () => {
+    writeFileSync(join(folder, name), text);
+    scanOnce(tree, { ...options(), now: at });
+  };
+  const later = () => Date.UTC(2026, 8, 28, 7, 30, 0);
+
+  it("carries a recorded inbox reply into the status file: done, with the reply on every note", () => {
+    deliver();
+    receipts({ acknowledged: true, reply: { at: "2026-09-28T07:20:00Z", body: "Received 2 notes. Plan updated.\nDetails in the doc." } });
+    expect(reconcileStatuses(tree, { ...options(), now: later })).toBe(1);
+    const status = readStatus();
+    expect(status).toMatchObject({
+      state: "done",
+      at: "2026-09-28T07:30:00.000Z",
+      message: "Firstmate replied: Received 2 notes. Plan updated.",
+      inboxId: `fm-${digest}`,
+      noteIds: ["n1", "n2"],
+    });
+    expect(status.replies).toEqual(
+      ["n1", "n2"].map((noteId) => ({
+        noteId,
+        author: "firstmate",
+        at: "2026-09-28T07:20:00Z",
+        text: "Received 2 notes. Plan updated.\nDetails in the doc.",
+        link: null,
+        done: true,
+      }))
+    );
+    expect(reconcileStatuses(tree, { ...options(), now: later })).toBe(0);
+    expect(readStatus().replies).toHaveLength(2);
+  });
+
+  it("marks a note firstmate acknowledged but has not answered as assigned", () => {
+    deliver();
+    receipts({ acknowledged: true });
+    expect(reconcileStatuses(tree, { ...options(), now: later })).toBe(1);
+    expect(readStatus()).toMatchObject({ state: "assigned", message: ACKNOWLEDGED_MESSAGE, replies: [] });
+    receipts({ acknowledged: true, reply: { at: "2026-09-28T07:40:00Z", body: "Done." } });
+    reconcileStatuses(tree, { ...options(), now: later });
+    expect(readStatus()).toMatchObject({ state: "done", message: "Firstmate replied: Done." });
+  });
+
+  it("says firstmate has not handled a note still queued, once, and stays received", () => {
+    deliver();
+    receipts({ acknowledged: false });
+    expect(reconcileStatuses(tree, { ...options(), now: later })).toBe(1);
+    expect(readStatus()).toMatchObject({ state: "received", message: WAITING_MESSAGE });
+    expect(reconcileStatuses(tree, { ...options(), now: later })).toBe(0);
+  });
+
+  it("leaves a status firstmate finished by hand, and skips receipts when none is open", () => {
+    deliver();
+    const finished = { ...readStatus(), state: "done", message: "Hand written" };
+    writeFileSync(statusFile(), JSON.stringify(finished));
+    writeFileSync(join(fmRoot, "fail"), "");
+    expect(reconcileStatuses(tree, { ...options(), now: later })).toBe(0);
+    expect(readStatus()).toEqual(finished);
+    expect(logs.join("\n")).not.toContain("receipts failed");
+  });
+
+  it("keeps the status as it is when fm-inbox.sh receipts fails", () => {
+    deliver();
+    const before = readStatus();
+    expect(reconcileStatuses(tree, { ...options(), now: later })).toBe(0);
+    expect(readStatus()).toEqual(before);
+    expect(logs.join("\n")).toContain("receipts failed");
+  });
+
+  it("the CLI reconciles on --once: a reply recorded after delivery reaches the status file", () => {
+    deliver();
+    receipts({ acknowledged: true, reply: { at: "2026-09-28T07:20:00Z", body: "Answered." } });
+    execFileSync("node", [WATCHER, "--once", "--downloads", drop], {
+      env: { ...process.env, FM_ROOT: fmRoot },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(readStatus()).toMatchObject({ state: "done" });
+    expect(readStatus().replies.map((r: { text: string }) => r.text)).toEqual(["Answered.", "Answered."]);
   });
 
   it("records a rejected file as a failed status", () => {
